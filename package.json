@@ -1,7 +1,7 @@
 {
   "name": "pi-pty",
   "version": "1.0.0",
-  "description": "",
+  "description": "Interactive PTY management extension for pi-coding-agent",
   "main": "dist/index.js",
   "scripts": {
     "build": "tsc",
@@ -12,12 +12,15 @@
     "typescript": "^5.9.3",
     "vitest": "^4.1.4"
   },
-  "keywords": [],
+  "keywords": ["pi-package"],
   "author": "",
   "license": "ISC",
   "type": "commonjs",
   "dependencies": {
     "@sinclair/typebox": "^0.34.49",
     "zigpty": "^0.1.5"
+  },
+  "pi": {
+    "extensions": ["./src/index.ts"]
   }
 }
