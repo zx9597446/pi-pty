@@ -494,4 +494,195 @@ describe('index.ts tool execute functions', () => {
       expect(exitMsg.content[0].text).toContain('pty_read');
     });
   });
+
+  describe('pty_read notifyOnExit reminder', () => {
+    beforeEach(async () => { await registerTools(); });
+
+    it('should append reminder when notifyOnExit is true and session is running', async () => {
+      const spawnTool = mockPi.getTool('pty_spawn')!;
+      const spawnResult = await spawnTool.execute('tc1', {
+        command: 'test',
+        description: 'd',
+        notifyOnExit: true,
+      }, { sessionId: 's1' });
+
+      const id = spawnResult.content[0].text.match(/ID: (pty_[0-9a-f]+)/)![1];
+
+      const pty = getLastPty();
+      pty.emitData('some output\n');
+
+      const readTool = mockPi.getTool('pty_read')!;
+      const result = await readTool.execute('tc2', { id });
+
+      expect(result.content[0].text).toContain('<system_reminder>');
+      expect(result.content[0].text).toContain('notifyOnExit=true');
+      expect(result.content[0].text).toContain('pty_exited');
+    });
+
+    it('should not append reminder when notifyOnExit is false', async () => {
+      const spawnTool = mockPi.getTool('pty_spawn')!;
+      const spawnResult = await spawnTool.execute('tc3', {
+        command: 'test',
+        description: 'd',
+        notifyOnExit: false,
+      }, { sessionId: 's1' });
+
+      const id = spawnResult.content[0].text.match(/ID: (pty_[0-9a-f]+)/)![1];
+
+      const pty = getLastPty();
+      pty.emitData('output\n');
+
+      const readTool = mockPi.getTool('pty_read')!;
+      const result = await readTool.execute('tc4', { id });
+
+      expect(result.content[0].text).not.toContain('<system_reminder>');
+    });
+  });
+
+  describe('pty_read search pagination', () => {
+    beforeEach(async () => { await registerTools(); });
+
+    it('should show pagination info when search has more matches', async () => {
+      const spawnTool = mockPi.getTool('pty_spawn')!;
+      const spawnResult = await spawnTool.execute('tc1', {
+        command: 'test',
+        description: 'd',
+      }, { sessionId: 's1' });
+
+      const id = spawnResult.content[0].text.match(/ID: (pty_[0-9a-f]+)/)![1];
+
+      const pty = getLastPty();
+      for (let i = 1; i <= 5; i++) pty.emitData(`error ${i}\n`);
+
+      const readTool = mockPi.getTool('pty_read')!;
+      const result = await readTool.execute('tc2', {
+        id,
+        pattern: 'error',
+        offset: 0,
+        limit: 2,
+      });
+
+      expect(result.content[0].text).toContain('matches shown');
+      expect(result.content[0].text).toContain('offset=2');
+    });
+  });
+
+  describe('pty_read ANSI stripping in search', () => {
+    beforeEach(async () => { await registerTools(); });
+
+    it('should strip ANSI from search result lines by default', async () => {
+      const spawnTool = mockPi.getTool('pty_spawn')!;
+      const spawnResult = await spawnTool.execute('tc1', {
+        command: 'test',
+        description: 'd',
+      }, { sessionId: 's1' });
+
+      const id = spawnResult.content[0].text.match(/ID: (pty_[0-9a-f]+)/)![1];
+
+      const pty = getLastPty();
+      pty.emitData('\x1b[31merror: fail\x1b[0m\n');
+
+      const readTool = mockPi.getTool('pty_read')!;
+      const result = await readTool.execute('tc2', {
+        id,
+        pattern: 'error',
+      });
+
+      // ANSI codes should be stripped from output
+      expect(result.content[0].text).not.toContain('\x1b[');
+      expect(result.content[0].text).toContain('error: fail');
+    });
+
+    it('should preserve ANSI when stripAnsi is false', async () => {
+      const spawnTool = mockPi.getTool('pty_spawn')!;
+      const spawnResult = await spawnTool.execute('tc3', {
+        command: 'test',
+        description: 'd',
+      }, { sessionId: 's1' });
+
+      const id = spawnResult.content[0].text.match(/ID: (pty_[0-9a-f]+)/)![1];
+
+      const pty = getLastPty();
+      pty.emitData('\x1b[32mok\x1b[0m\n');
+
+      const readTool = mockPi.getTool('pty_read')!;
+      const result = await readTool.execute('tc4', {
+        id,
+        stripAnsi: false,
+      });
+
+      expect(result.content[0].text).toContain('\x1b[');
+    });
+  });
+
+  describe('agent_end cleanup', () => {
+    it('should register agent_end handler that clears all sessions', async () => {
+      let agentEndHandler: (() => void) | null = null;
+      const mockPiWithAgentEnd = {
+        registerTool: () => {},
+        on: (event: string, handler: any) => {
+          if (event === 'agent_end') agentEndHandler = handler;
+        },
+        sendMessage: async () => {},
+      };
+
+      // Spawn a session first
+      const spawnTool = mockPi.getTool('pty_spawn');
+      if (!spawnTool) {
+        // Need to register tools first
+        const mod = await import('../src/index.js');
+        mod.default(mockPiWithAgentEnd as any);
+      }
+
+      // Register tools on real mockPi
+      await registerTools();
+
+      // Now check the agent_end handler exists
+      // We need to re-import to capture the handler
+      const mod = await import('../src/index.js');
+      const capturePi = {
+        registerTool: () => {},
+        on: (event: string, handler: any) => {
+          if (event === 'agent_end') agentEndHandler = handler;
+        },
+        sendMessage: async () => {},
+      };
+      mod.default(capturePi as any);
+
+      expect(agentEndHandler).toBeDefined();
+
+      // Spawn sessions, then call handler
+      const spawnTool2 = mockPi.getTool('pty_spawn')!;
+      await spawnTool2.execute('tc1', { command: 'a', description: 'd' }, { sessionId: 's1' });
+      await spawnTool2.execute('tc2', { command: 'b', description: 'd' }, { sessionId: 's1' });
+      expect(manager.list().length).toBeGreaterThanOrEqual(2);
+
+      // Simulate agent_end
+      agentEndHandler!();
+      expect(manager.list()).toEqual([]);
+    });
+  });
+
+  describe('pty_write exited session rejection', () => {
+    beforeEach(async () => { await registerTools(); });
+
+    it('should reject write to an exited session', async () => {
+      const spawnTool = mockPi.getTool('pty_spawn')!;
+      const spawnResult = await spawnTool.execute('tc1', {
+        command: 'test',
+        description: 'd',
+      }, { sessionId: 's1' });
+
+      const id = spawnResult.content[0].text.match(/ID: (pty_[0-9a-f]+)/)![1];
+
+      // Exit the process
+      const pty = getLastPty();
+      pty.emitExit(0);
+
+      const writeTool = mockPi.getTool('pty_write')!;
+      await expect(
+        writeTool.execute('tc2', { id, data: 'test' })
+      ).rejects.toThrow("session status is 'exited'");
+    });
+  });
 });
