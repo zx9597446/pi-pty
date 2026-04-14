@@ -1,0 +1,152 @@
+import { spawn, type IPty } from 'zigpty';
+import { RingBuffer } from './buffer.js';
+import type { PTYSession, PTYSessionInfo, SpawnOptions } from './types.js';
+import * as crypto from 'crypto';
+
+const DEFAULT_TERMINAL_COLS = 120;
+const DEFAULT_TERMINAL_ROWS = 40;
+const SESSION_ID_BYTE_LENGTH = 4;
+
+function generateId(): string {
+  return `pty_${crypto.randomBytes(SESSION_ID_BYTE_LENGTH).toString('hex')}`;
+}
+
+export class SessionLifecycleManager {
+  private sessions: Map<string, PTYSession> = new Map();
+
+  private createSessionObject(opts: SpawnOptions): PTYSession {
+    const id = generateId();
+    const args = opts.args ?? [];
+    const workdir = opts.workdir ?? process.cwd();
+    const title =
+      opts.title ?? (`${opts.command} ${args.join(' ')}`.trim() || `Terminal ${id.slice(-4)}`);
+
+    const buffer = new RingBuffer();
+    return {
+      id,
+      title,
+      description: opts.description,
+      command: opts.command,
+      args,
+      workdir,
+      env: opts.env,
+      status: 'running',
+      pid: 0, // will be set after spawn
+      createdAt: new Date(),
+      parentSessionId: opts.parentSessionId,
+      parentAgent: opts.parentAgent,
+      notifyOnExit: opts.notifyOnExit ?? false,
+      buffer,
+      process: null, // will be set
+    };
+  }
+
+  private spawnProcess(
+    session: PTYSession,
+    onData: (session: PTYSession, data: string) => void,
+    onExit: (session: PTYSession, exitCode: number | null) => void
+  ): void {
+    const env = { ...process.env, ...session.env } as Record<string, string>;
+    const ptyProcess: IPty = spawn(session.command, session.args, {
+      cols: DEFAULT_TERMINAL_COLS,
+      rows: DEFAULT_TERMINAL_ROWS,
+      cwd: session.workdir,
+      env,
+      onExit: (exitCode: number, signal: number) => {
+        // Flush any remaining incomplete line in the buffer
+        session.buffer.flush();
+
+        if (session.status === 'killing') {
+          session.status = 'killed';
+        } else {
+          session.status = 'exited';
+        }
+        session.exitCode = exitCode;
+        onExit(session, exitCode);
+      }
+    });
+
+    ptyProcess.onData((data: string | Buffer) => {
+      const strData = typeof data === 'string' ? data : data.toString();
+      session.buffer.append(strData);
+      onData(session, strData);
+    });
+
+    session.process = ptyProcess;
+    session.pid = ptyProcess.pid;
+  }
+
+  spawn(
+    opts: SpawnOptions,
+    onData: (session: PTYSession, data: string) => void,
+    onExit: (session: PTYSession, exitCode: number | null) => void
+  ): PTYSessionInfo {
+    const session = this.createSessionObject(opts);
+    this.spawnProcess(session, onData, onExit);
+    this.sessions.set(session.id, session);
+    return this.toInfo(session);
+  }
+
+  kill(id: string, cleanup: boolean = false): boolean {
+    const session = this.sessions.get(id);
+    if (!session) {
+      return false;
+    }
+
+    if (session.status === 'running') {
+      session.status = 'killing';
+      try {
+        session.process?.kill();
+      } catch {
+        // Ignore kill errors
+      }
+    }
+
+    if (cleanup) {
+      session.buffer.clear();
+      this.sessions.delete(id);
+    }
+
+    return true;
+  }
+
+  clearAllSessions(): void {
+    for (const id of Array.from(this.sessions.keys())) {
+      this.kill(id, true);
+    }
+  }
+
+  cleanupBySession(parentSessionId: string): void {
+    for (const [id, session] of this.sessions) {
+      if (session.parentSessionId === parentSessionId) {
+        this.kill(id, true);
+      }
+    }
+  }
+
+  getSession(id: string): PTYSession | null {
+    return this.sessions.get(id) || null;
+  }
+
+  listSessions(): PTYSession[] {
+    return Array.from(this.sessions.values());
+  }
+
+  toInfo(session: PTYSession): PTYSessionInfo {
+    return {
+      id: session.id,
+      title: session.title,
+      description: session.description,
+      command: session.command,
+      args: session.args,
+      workdir: session.workdir,
+      status: session.status,
+      notifyOnExit: session.notifyOnExit,
+      exitCode: session.exitCode,
+      exitSignal: session.exitSignal,
+      pid: session.pid,
+      createdAt: session.createdAt.toISOString(),
+      lineCount: session.buffer.length,
+    };
+  }
+}
