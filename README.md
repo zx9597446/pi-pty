@@ -20,122 +20,77 @@ Ported from [opencode-pty](https://github.com/shekohex/opencode-pty), now powere
 - [pi-coding-agent](https://github.com/badlogic/pi-mono) installed (`npm install -g @mariozechner/pi-coding-agent`)
 - `npm` (for dependency installation)
 
-### Option 1: Install as a pi package (recommended)
-
 Install globally for all projects:
 
 ```bash
 pi install git:github.com/zx9597446/pi-pty
 ```
 
-Or project-local (written to `.pi/settings.json`, shareable with team):
-
-```bash
-pi install git:github.com/zx9597446/pi-pty -l
-```
-
-Pin to a specific tag or commit:
-
-```bash
-pi install git:github.com/zx9597446/pi-pty@v1.0.0
-```
-
-> **What happens:** pi clones the repo, runs `npm install` for dependencies, and auto-discovers the extension from the `extensions/` directory. Run `/reload` in pi to activate.
-
-### Option 2: Project-local from source
-
-```bash
-# Clone into the project extension directory
-git clone https://github.com/zx9597446/pi-pty .pi/extensions/pi-pty
-
-# Install dependencies (zigpty, typebox)
-cd .pi/extensions/pi-pty && npm install
-
-# Optional: build to JS (pi can also load .ts directly via jiti)
-npm run build
-```
-
-### Option 3: Quick try (no install)
-
-```bash
-pi -e git:github.com/zx9597446/pi-pty
-```
-
-This installs to a temp directory for the current session only.
-
-### Update / Remove
-
-```bash
-pi update                        # update all non-pinned packages
-pi update git:github.com/zx9597446/pi-pty   # update specific package
-pi remove git:github.com/zx9597446/pi-pty   # remove
-```
-
 ## Tools
 
-| Tool | Description |
-|------|-------------|
-| `pty_spawn` | Spawn a new PTY session (background process) |
-| `pty_write` | Write input/keystrokes to a session's stdin |
-| `pty_read` | Read output buffer with pagination and regex filtering |
-| `pty_list` | List all active and exited PTY sessions |
-| `pty_kill` | Terminate a session, optionally clean up buffer |
-| `pty_watch` | Async watch for a regex pattern in session output |
+| Tool        | Description                                            |
+| ----------- | ------------------------------------------------------ |
+| `pty_spawn` | Spawn a new PTY session (background process)           |
+| `pty_write` | Write input/keystrokes to a session's stdin            |
+| `pty_read`  | Read output buffer with pagination and regex filtering |
+| `pty_list`  | List all active and exited PTY sessions                |
+| `pty_kill`  | Terminate a session, optionally clean up buffer        |
+| `pty_watch` | Async watch for a regex pattern in session output      |
 
 ### `pty_spawn`
 
 Spawn a new PTY session.
 
-| Parameter | Type | Required | Default | Description |
-|-----------|------|----------|---------|-------------|
-| `command` | string | ✓ | — | Executable to run |
-| `args` | string[] | | `[]` | Command arguments |
-| `workdir` | string | | `cwd` | Working directory |
-| `env` | Record<string,string> | | — | Extra env vars (merged with `process.env`) |
-| `title` | string | | auto-generated | Human-readable session title |
-| `description` | string | ✓ | — | 5–10 word description of what the session is for |
-| `notifyOnExit` | boolean | | `false` | Send `<pty_exited>` message when process exits |
+| Parameter      | Type                  | Required | Default        | Description                                      |
+| -------------- | --------------------- | -------- | -------------- | ------------------------------------------------ |
+| `command`      | string                | ✓        | —              | Executable to run                                |
+| `args`         | string[]              |          | `[]`           | Command arguments                                |
+| `workdir`      | string                |          | `cwd`          | Working directory                                |
+| `env`          | Record<string,string> |          | —              | Extra env vars (merged with `process.env`)       |
+| `title`        | string                |          | auto-generated | Human-readable session title                     |
+| `description`  | string                | ✓        | —              | 5–10 word description of what the session is for |
+| `notifyOnExit` | boolean               |          | `false`        | Send `<pty_exited>` message when process exits   |
 
 ### `pty_write`
 
 Write data to a session's stdin. Supports escape sequences:
 
-| Sequence | Meaning |
-|----------|---------|
-| `\n` | newline |
-| `\r` | carriage return |
-| `\t` | tab |
-| `\\` | literal backslash |
-| `\xNN` | hex byte (e.g. `\x03` = Ctrl+C, `\x04` = Ctrl+D) |
-| `\uNNNN` | unicode (e.g. `\u4e2d` = 中) |
+| Sequence | Meaning                                          |
+| -------- | ------------------------------------------------ |
+| `\n`     | newline                                          |
+| `\r`     | carriage return                                  |
+| `\t`     | tab                                              |
+| `\\`     | literal backslash                                |
+| `\xNN`   | hex byte (e.g. `\x03` = Ctrl+C, `\x04` = Ctrl+D) |
+| `\uNNNN` | unicode (e.g. `\u4e2d` = 中)                     |
 
 ### `pty_read`
 
 Read the session output buffer.
 
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `offset` | number | `0` | Start line (0-based) |
-| `limit` | number | `500` | Max lines to read |
-| `pattern` | string | — | Regex to filter lines |
-| `ignoreCase` | boolean | `false` | Case-insensitive pattern matching |
-| `stripAnsi` | boolean | `true` | Strip ANSI escape sequences from output |
+| Parameter    | Type    | Default | Description                             |
+| ------------ | ------- | ------- | --------------------------------------- |
+| `offset`     | number  | `0`     | Start line (0-based)                    |
+| `limit`      | number  | `500`   | Max lines to read                       |
+| `pattern`    | string  | —       | Regex to filter lines                   |
+| `ignoreCase` | boolean | `false` | Case-insensitive pattern matching       |
+| `stripAnsi`  | boolean | `true`  | Strip ANSI escape sequences from output |
 
 ### `pty_watch`
 
 Watch a session for a regex pattern. Fires `<pty_match>` asynchronously when found (single-shot — removed after first match).
 
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `id` | string | Session ID |
-| `pattern` | string | Regex to watch for |
+| Parameter    | Type    | Description               |
+| ------------ | ------- | ------------------------- |
+| `id`         | string  | Session ID                |
+| `pattern`    | string  | Regex to watch for        |
 | `ignoreCase` | boolean | Case-insensitive matching |
 
 ### `pty_kill`
 
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `id` | string | — | Session ID |
+| Parameter | Type    | Default | Description                             |
+| --------- | ------- | ------- | --------------------------------------- |
+| `id`      | string  | —       | Session ID                              |
 | `cleanup` | boolean | `false` | If true, remove session and free buffer |
 
 ## Example Workflow
@@ -156,8 +111,8 @@ Watch a session for a regex pattern. Fires `<pty_match>` asynchronously when fou
 
 ## Environment Variables
 
-| Variable | Default | Description |
-|----------|---------|-------------|
+| Variable              | Default          | Description                                                                    |
+| --------------------- | ---------------- | ------------------------------------------------------------------------------ |
 | `PTY_MAX_BUFFER_SIZE` | `1000000` (~1MB) | Max output buffer size in characters. Oldest content is trimmed when exceeded. |
 
 ## Architecture
@@ -181,10 +136,10 @@ pi-pty/
 
 ### Dependencies
 
-| Package | Purpose |
-|---------|---------|
-| [`zigpty`](https://github.com/pithings/zigpty) | Lightweight PTY process spawning (replaces `node-pty`) |
-| [`@sinclair/typebox`](https://github.com/sinclairzx81/typebox) | JSON Schema builder for tool parameter validation |
+| Package                                                        | Purpose                                                |
+| -------------------------------------------------------------- | ------------------------------------------------------ |
+| [`zigpty`](https://github.com/pithings/zigpty)                 | Lightweight PTY process spawning (replaces `node-pty`) |
+| [`@sinclair/typebox`](https://github.com/sinclairzx81/typebox) | JSON Schema builder for tool parameter validation      |
 
 ### Inherited from opencode-pty
 
@@ -196,4 +151,4 @@ The original architecture (RingBuffer, SessionLifecycleManager, OutputManager, e
 
 ## License
 
-ISC
+MIT
