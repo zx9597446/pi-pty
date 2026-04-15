@@ -61,30 +61,42 @@ export default function (pi: any) {
           // Live output handling can be added here if needed for Web UI
         },
         async (exitCode) => {
-          if (args.notifyOnExit) {
-            const readResult = manager.read(info.id);
-            const totalLines = readResult?.totalLines ?? 0;
-            const lastLineResult = totalLines > 0
-              ? manager.read(info.id, totalLines - 1, 1)
-              : null;
-            const lastLine = lastLineResult?.lines[0]?.slice(0, 250) ?? '(no output)';
-            const errorHint = exitCode !== 0
-              ? `\nNon-zero exit detected. Use pty_read with pattern='Error|error|ERR' to investigate.`
-              : '';
-            const message = [
-              `<pty_exited>`,
-              `ID: ${info.id}`,
-              `Title: ${info.title}`,
-              `Command: ${info.command} ${info.args.join(' ')}`,
-              `Exit Code: ${exitCode}`,
-              `Lines: ${totalLines}`,
-              `Last line: ${lastLine}`,
-              `</pty_exited>${errorHint}`,
-            ].join('\n');
-            await pi.sendMessage({
+          try {
+            if (args.notifyOnExit) {
+              const readResult = manager.read(info.id);
+              const totalLines = readResult?.totalLines ?? 0;
+              const lastLineResult = totalLines > 0
+                ? manager.read(info.id, totalLines - 1, 1)
+                : null;
+              const lastLine = lastLineResult?.lines[0]?.slice(0, 250) ?? '(no output)';
+              const errorHint = exitCode !== 0
+                ? `\nNon-zero exit detected. Use pty_read with pattern='Error|error|ERR' to investigate.`
+                : '';
+              const message = [
+                `<pty_exited>`,
+                `ID: ${info.id}`,
+                `Title: ${info.title}`,
+                `Command: ${info.command} ${info.args.join(' ')}`,
+                `Exit Code: ${exitCode}`,
+                `Lines: ${totalLines}`,
+                `Last line: ${lastLine}`,
+                `</pty_exited>${errorHint}`,
+              ].join('\n');
+              await pi.sendMessage({
+                  role: 'assistant',
+                  content: [{ type: 'text', text: message }]
+              });
+            }
+          } catch (err) {
+            console.error(`Error in pty ${info.id} onExit callback:`, err);
+            try {
+              await pi.sendMessage({
                 role: 'assistant',
-                content: [{ type: 'text', text: message }]
-            });
+                content: [{ type: 'text', text: `<pty_error id="${info.id}">Failed to send exit notification: ${err instanceof Error ? err.message : String(err)}</pty_error>` }]
+              });
+            } catch (innerErr) {
+              console.error('Fatal error in pty error handler:', innerErr);
+            }
           }
         }
       );
