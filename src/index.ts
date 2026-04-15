@@ -104,7 +104,8 @@ export default function (pi: any) {
         `Status: ${info.status}`,
         `NotifyOnExit: ${info.notifyOnExit}`,
         `</pty_spawned>`,
-        ...(info.notifyOnExit ? ['', NOTIFY_ON_EXIT_INSTRUCTIONS] : []),
+        '',
+        NOTIFY_ON_EXIT_INSTRUCTIONS,
       ].join('\n');
 
       return {
