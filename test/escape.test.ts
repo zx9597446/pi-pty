@@ -58,6 +58,28 @@ describe('parseEscapeSequences', () => {
     expect(parseEscapeSequences('\\x4f\\x4f')).toBe('OO');
     expect(parseEscapeSequences('\\x4F\\X4F')).toBe('O\\X4F'); // \X is not valid
   });
+
+  it('should not convert incomplete hex sequences', () => {
+    expect(parseEscapeSequences('\\x4')).toBe('\\x4');
+    expect(parseEscapeSequences('\\x')).toBe('\\x');
+  });
+
+  it('should not convert incomplete unicode sequences', () => {
+    expect(parseEscapeSequences('\\u004')).toBe('\\u004');
+    expect(parseEscapeSequences('\\u')).toBe('\\u');
+  });
+
+  it('should not convert invalid hex digits', () => {
+    expect(parseEscapeSequences('\\xG1')).toBe('\\xG1');
+  });
+
+  it('should handle backslash at end of string', () => {
+    expect(parseEscapeSequences('test\\')).toBe('test\\');
+  });
+
+  it('should handle nested-like backslashes', () => {
+    expect(parseEscapeSequences('\\\\\\n')).toBe('\\\n');
+  });
 });
 
 describe('ETX and EOT constants', () => {

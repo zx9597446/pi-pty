@@ -9,6 +9,7 @@ export type SessionUpdateCallback = (info: PTYSessionInfo, event: SessionEvent) 
 export interface Watcher {
   pattern: RegExp;
   callback: (match: string) => void;
+  persistent?: boolean;
 }
 
 export class PTYManager {
@@ -44,11 +45,11 @@ export class PTYManager {
     }
   }
 
-  addWatcher(id: string, pattern: RegExp, callback: (match: string) => void): void {
+  addWatcher(id: string, pattern: RegExp, callback: (match: string) => void, persistent: boolean = false): void {
     if (!this.watchers.has(id)) {
       this.watchers.set(id, new Set());
     }
-    this.watchers.get(id)!.add({ pattern, callback });
+    this.watchers.get(id)!.add({ pattern, callback, persistent });
   }
 
   private notifyRawOutput(id: string, data: string): void {
@@ -72,8 +73,10 @@ export class PTYManager {
           } catch (err) {
             console.error('Error in pty watcher callback:', err);
           }
-          // Single-shot watchers by default
-          sessionWatchers.delete(watcher);
+          
+          if (!watcher.persistent) {
+            sessionWatchers.delete(watcher);
+          }
         }
       }
     }

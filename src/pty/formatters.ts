@@ -25,7 +25,7 @@ export function formatSessionInfo(session: SessionInfo): string[] {
   return [
     `ID: ${session.id}`,
     `  Title: ${session.title}`,
-    `  Command: ${session.command} ${session.args.join(' ')}`,
+    `  Command: ${(`${session.command} ${session.args.join(' ')}`).trim()}`,
     `  Status: ${session.status}`,
     `  PID: ${session.pid}`,
     `  Lines: ${session.lineCount}`,

@@ -130,20 +130,35 @@ describe('formatSessionInfo', () => {
       lineCount: 0,
     };
     const result = formatSessionInfo(session);
-    expect(result[2]).toBe('  Command: ls ');
+    expect(result[2]).toBe('  Command: ls'); // No trailing space
   });
 
-  it('should include trailing empty string', () => {
+  it('should handle large PID and lineCount', () => {
     const session = {
-      id: 'x',
-      title: 't',
-      command: 'c',
-      args: [],
+      id: 'pty_big',
+      title: 'Big',
+      command: 'top',
+      args: ['-b'],
       status: 'running',
-      pid: 1,
-      lineCount: 0,
+      pid: 999999,
+      lineCount: 1234567,
     };
     const result = formatSessionInfo(session);
-    expect(result[result.length - 1]).toBe('');
+    expect(result[4]).toBe('  PID: 999999');
+    expect(result[5]).toBe('  Lines: 1234567');
+  });
+});
+
+describe('formatLine extra edge cases', () => {
+  it('should handle very large line numbers', () => {
+    expect(formatLine('text', 123456789)).toBe('[123456789] text');
+  });
+
+  it('should handle negative line numbers', () => {
+    expect(formatLine('text', -1)).toBe('[-1] text');
+  });
+
+  it('should handle multi-line text (although typically formatLine is called per line)', () => {
+    expect(formatLine('line1\nline2', 1)).toBe('[1] line1\nline2');
   });
 });

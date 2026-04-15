@@ -66,4 +66,56 @@ describe('PTY Watcher', () => {
 
     expect(count).toBe(1);
   });
+
+  it('should support multiple different watchers on the same session', async () => {
+    let countA = 0;
+    let countB = 0;
+    const info = manager.spawn({ command: 't', parentSessionId: 'p', description: 'd' }, () => {}, () => {});
+    const ptyInstance = (mockSpawn as any).mock.results[(mockSpawn as any).mock.results.length - 1].value;
+
+    manager.addWatcher(info.id, /Apple/, () => { countA++; });
+    manager.addWatcher(info.id, /Banana/, () => { countB++; });
+
+    ptyInstance.emitData('Eating an Apple\n');
+    expect(countA).toBe(1);
+    expect(countB).toBe(0);
+
+    ptyInstance.emitData('Eating a Banana\n');
+    expect(countA).toBe(1);
+    expect(countB).toBe(1);
+  });
+
+  it('should trigger multiple watchers if they match the same data', async () => {
+    let countA = 0;
+    let countB = 0;
+    const info = manager.spawn({ command: 't', parentSessionId: 'p', description: 'd' }, () => {}, () => {});
+    const ptyInstance = (mockSpawn as any).mock.results[(mockSpawn as any).mock.results.length - 1].value;
+
+    manager.addWatcher(info.id, /Fruit/, () => { countA++; });
+    manager.addWatcher(info.id, /Apple/, () => { countB++; });
+
+    ptyInstance.emitData('An Apple is a Fruit\n');
+    expect(countA).toBe(1);
+    expect(countB).toBe(1);
+  });
+
+  it('should handle watcher errors without affecting others', async () => {
+    let countB = 0;
+    const info = manager.spawn({ command: 't', parentSessionId: 'p', description: 'd' }, () => {}, () => {});
+    const ptyInstance = (mockSpawn as any).mock.results[(mockSpawn as any).mock.results.length - 1].value;
+
+    const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    // First watcher throws
+    manager.addWatcher(info.id, /test/, () => { throw new Error('BOOM'); });
+    // Second watcher is fine
+    manager.addWatcher(info.id, /test/, () => { countB++; });
+
+    ptyInstance.emitData('test data\n');
+    
+    expect(countB).toBe(1);
+    expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('Error in pty watcher callback'), expect.any(Error));
+    
+    consoleSpy.mockRestore();
+  });
 });

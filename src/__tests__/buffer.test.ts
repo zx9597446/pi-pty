@@ -40,12 +40,16 @@ describe('RingBuffer', () => {
       expect(buf.readRaw()).toBe('bcdefghijX');
     });
 
-    it('works with multiline data at boundary', () => {
+    it('works with multiline data at boundary with line alignment', () => {
       const buf = new RingBuffer(15);
-      buf.append('aaaaa\nbbbbb\n'); // 11 chars + 1 = 12
-      buf.append('ccccc\n');        // total 18, truncates to 15
+      buf.append('aaaaa\nbbbbb\n'); // 12 chars
+      buf.append('ccccc\n');        // total 18, truncates to next newline at index 5
       const raw = buf.readRaw();
-      expect(raw.length).toBe(15);
+      // "aaaaa\nbbbbb\nccccc\n" 
+      // excess = 3. indexOf('\n', 3) = 5.
+      // slice(6) = "bbbbb\nccccc\n" (12 chars)
+      expect(raw.length).toBe(12);
+      expect(raw).toBe('bbbbb\nccccc\n');
     });
   });
 

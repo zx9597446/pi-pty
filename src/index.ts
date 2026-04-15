@@ -260,6 +260,7 @@ export default function (pi: any) {
       id: Type.String({ description: 'The PTY session ID to watch' }),
       pattern: Type.String({ description: 'Regex pattern to look for' }),
       ignoreCase: Type.Optional(Type.Boolean({ description: 'Case-insensitive matching (default: false)' })),
+      persistent: Type.Optional(Type.Boolean({ description: 'If true, the watcher remains active after a match (default: false)' })),
     }),
     async execute(toolCallId: string, args: any) {
       const session = manager.get(args.id);
@@ -285,11 +286,12 @@ export default function (pi: any) {
             role: 'assistant',
             content: [{ type: 'text', text: message }]
         });
-      });
+      }, args.persistent);
 
+      const mode = args.persistent ? 'persistent ' : '';
       return {
-        content: [{ type: "text", text: `Started watching session ${args.id} for pattern: "${args.pattern}"` }],
-        details: { id: args.id, pattern: args.pattern }
+        content: [{ type: "text", text: `Started watching ${mode}session ${args.id} for pattern: "${args.pattern}"` }],
+        details: { id: args.id, pattern: args.pattern, persistent: !!args.persistent }
       };
     },
   });
