@@ -269,6 +269,10 @@ export default function (pi: any) {
         throw new Error(`PTY session '${args.id}' not found.`);
       }
 
+      if (session.status !== 'running') {
+        throw new Error(`Cannot watch PTY '${args.id}' - session status is '${session.status}'.`);
+      }
+
       const regex = new RegExp(args.pattern, args.ignoreCase ? 'i' : '');
       
       manager.addWatcher(args.id, regex, async (matchData) => {

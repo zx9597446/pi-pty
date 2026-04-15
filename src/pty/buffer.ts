@@ -9,30 +9,50 @@ export interface SearchMatch {
 export class RingBuffer {
   private buffer: string = '';
   private maxSize: number;
+  private cachedLines: string[] | null = null;
+  private isDirty: boolean = false;
 
   constructor(maxSize: number = DEFAULT_MAX_BUFFER_SIZE) {
     this.maxSize = maxSize;
   }
 
   append(data: string): void {
+    if (!data) return;
     this.buffer += data;
+    this.isDirty = true;
+    
     if (this.buffer.length > this.maxSize) {
-      this.buffer = this.buffer.slice(-this.maxSize);
+      const excess = this.buffer.length - this.maxSize;
+      // Find the next newline to ensure we always start with a clean line
+      const nextNewline = this.buffer.indexOf('\n', excess);
+      if (nextNewline !== -1 && nextNewline < this.buffer.length - 1) {
+        this.buffer = this.buffer.slice(nextNewline + 1);
+      } else {
+        // Fallback to simple slice if no newline found
+        this.buffer = this.buffer.slice(-this.maxSize);
+      }
     }
   }
 
   private splitBufferLines(): string[] {
+    if (!this.isDirty && this.cachedLines) {
+      return this.cachedLines;
+    }
+
     const lines: string[] = this.buffer.split(/\r?\n/);
     // Remove empty string at end if buffer doesn't end with newline
     if (lines.length && lines[lines.length - 1] === '') {
       lines.pop();
     }
+    
+    this.cachedLines = lines;
+    this.isDirty = false;
     return lines;
   }
 
   read(offset: number = 0, limit?: number): string[] {
     if (this.buffer === '') return [];
-    const lines: string[] = this.splitBufferLines();
+    const lines = this.splitBufferLines();
     const start = Math.max(0, offset);
     const end = limit !== undefined ? start + limit : lines.length;
     return lines.slice(start, end);
