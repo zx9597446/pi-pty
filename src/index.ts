@@ -6,23 +6,17 @@ import { parseEscapeSequences, ETX, EOT } from './pty/escape.js';
 
 const NOTIFY_ON_EXIT_INSTRUCTIONS = [
   `<system_reminder>`,
-  `Completion signal for this session is the future \`<pty_exited>\` message.`,
-  `If you only need to know whether the command finished, do not call \`pty_read\`; wait for \`<pty_exited>\`.`,
-  `To wait for a specific output pattern (e.g. "Server started", "Ready"), use \`pty_watch\` instead of polling \`pty_read\`.`,
-  `The system will asynchronously notify you with \`<pty_match>\` when the pattern is detected.`,
-  `Never use sleep plus \`pty_read\` loops to check completion for this session.`,
-  `Call \`pty_read\` before exit only if you need live output now, the user explicitly asks for logs, or the exit notification reports a non-zero status and you need to investigate.`,
+  `- ASYNC MODE: Wait for \`<pty_exited>\` message for completion.`,
+  `- DO NOT POLL: Never use sleep + \`pty_read\` loops to check status.`,
+  `- FOR PATTERNS: Use \`pty_watch\` to wait for specific output (e.g., "Ready", "Error").`,
+  `- USE PTY_READ ONLY IF: You need immediate logs, user asks, or exit code is non-zero.`,
   `</system_reminder>`,
 ].join('\n');
 
 const NOTIFY_ON_EXIT_REMINDER = [
   `<system_reminder>`,
-  `This session was started with \`notifyOnExit=true\`.`,
-  `Completion signal is the future \`<pty_exited>\` message, not repeated \`pty_read\` calls.`,
-  `To wait for a specific string in the output, use \`pty_watch\` for efficient asynchronous notification.`,
-  `If you only need to know whether the command finished, stop polling and wait for \`<pty_exited>\`.`,
-  `Do not use sleep plus \`pty_read\` loops to check completion.`,
-  `Use \`pty_read\` only when you need live output now, the user explicitly asks for logs, or the exit notification reports a non-zero status and you need to investigate.`,
+  `- Reminder: This session has \`notifyOnExit=true\`. Wait for \`<pty_exited>\`.`,
+  `- Stop Polling: Use \`pty_watch\` for pattern matching or wait for the exit signal.`,
   `</system_reminder>`,
 ].join('\n');
 
@@ -70,9 +64,8 @@ export default function (pi: any) {
                 : null;
               const lastLine = lastLineResult?.lines[0]?.slice(0, 250) ?? '(no output)';
               const errorHint = exitCode !== 0
-                ? `\nNon-zero exit detected. Use pty_read with pattern='Error|error|ERR' to investigate.`
-                : '';
-              const message = [
+                ? `\n<system_reminder>\n- INVESTIGATE: Non-zero exit detected. Use \`pty_read\` with \`pattern='Error|error|ERR'\` to find root cause.\n</system_reminder>`
+                : '';              const message = [
                 `<pty_exited>`,
                 `ID: ${info.id}`,
                 `Title: ${info.title}`,
@@ -202,6 +195,10 @@ export default function (pi: any) {
             `No lines matched the pattern '${args.pattern}'.`,
             `Total lines in buffer: ${result.totalLines}`,
             `</pty_output>`,
+            '',
+            `<system_reminder>`,
+            `If you expect this pattern to appear in future output, use \`pty_watch\` to be notified automatically when it arrives.`,
+            `</system_reminder>`,
           ];
         } else {
           const formattedLines = result.matches.map(m => {
