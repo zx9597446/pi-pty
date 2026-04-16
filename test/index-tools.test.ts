@@ -431,6 +431,9 @@ describe('index.ts tool execute functions', () => {
       const pty = getLastPty();
       pty.emitData('Server is READY on port 3000\n');
 
+      // Wait for async notification
+      await new Promise(resolve => setTimeout(resolve, 100));
+
       // The watcher should have sent a message
       expect(mockPi.sentMessages.length).toBeGreaterThanOrEqual(1);
       const lastMsg = mockPi.sentMessages[mockPi.sentMessages.length - 1];
@@ -464,6 +467,9 @@ describe('index.ts tool execute functions', () => {
       pty.emitData('output line\n');
       pty.emitExit(0);
 
+      // Wait for async notification
+      await new Promise(resolve => setTimeout(resolve, 100));
+
       // Find the pty_exited message
       const exitMsg = mockPi.sentMessages.find(
         (m: any) => m.content[0].text.includes('<pty_exited>')
@@ -485,6 +491,9 @@ describe('index.ts tool execute functions', () => {
       const pty = getLastPty();
       pty.emitData('error: something failed\n');
       pty.emitExit(1);
+
+      // Wait for async notification
+      await new Promise(resolve => setTimeout(resolve, 100));
 
       const exitMsg = mockPi.sentMessages.find(
         (m: any) => m.content[0].text.includes('<pty_exited>')

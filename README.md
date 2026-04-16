@@ -37,6 +37,7 @@ pi install git:github.com/zx9597446/pi-pty
 | `pty_kill`    | Terminate a session, optionally clean up buffer        |
 | `pty_watch`   | Async watch for a regex pattern in session output      |
 | `pty_unwatch` | Stop watching a session for a specific pattern         |
+| `pty_help`    | Get the strategy guide for managing PTY sessions       |
 
 ### `pty_spawn`
 
@@ -49,12 +50,20 @@ Spawn a new PTY session.
 | `workdir`      | string                |          | `cwd`          | Working directory                                |
 | `env`          | Record<string,string> |          | —              | Extra env vars (merged with `process.env`)       |
 | `title`        | string                |          | auto-generated | Human-readable session title                     |
-| `description`  | string                | ✓        | —              | 5–10 word description of what the session is for |
+| `description`  | string                | ✓        | —              | 5–10 word description (shown in `pty_list`)        |
 | `notifyOnExit` | boolean               |          | `true`         | Send `<pty_exited>` message when process exits   |
 
 ### `pty_write`
 
-Write data to a session's stdin. Supports escape sequences:
+Write data to a session's stdin. Supports escape sequences and base64 encoding.
+
+| Parameter  | Type    | Default | Description                                   |
+| ---------- | ------- | ------- | --------------------------------------------- |
+| `id`       | string  | —       | Session ID                                    |
+| `data`     | string  | —       | Data to send                                  |
+| `isBase64` | boolean | `false` | If true, data is treated as base64 encoded    |
+
+Supported escape sequences:
 
 | Sequence | Meaning                                          |
 | -------- | ------------------------------------------------ |
@@ -98,6 +107,10 @@ Stop watching a session for a specific pattern.
 | `id`      | string | Session ID                                           |
 | `pattern` | string | Exact regex pattern string used when starting the watch |
 
+### `pty_help`
+
+Get the strategy guide for managing PTY sessions. No parameters required.
+
 ### `pty_kill`
 
 | Parameter | Type    | Default | Description                             |
@@ -133,14 +146,14 @@ Stop watching a session for a specific pattern.
 ```
 pi-pty/
 ├── src/
-│   ├── index.ts          # Extension entry point (registers 7 tools)
+│   ├── index.ts          # Extension entry point (registers 8 tools)
 │   └── pty/
 │       ├── manager.ts    # PTYManager — orchestrates lifecycle + output + watchers
 │       ├── lifecycle.ts  # SessionLifecycleManager — spawn/kill/process management
 │       ├── buffer.ts     # RingBuffer — append/read/search/overflow
 │       ├── output.ts     # OutputManager — read/write/search abstraction
 │       ├── escape.ts     # Escape sequence parser (\n \r \t \xNN \uNNNN)
-│       ├── formatters.ts # stripAnsi, formatLine, formatSessionInfo
+│       ├── formatters.ts # stripAnsi, formatLine, formatSessionInfo, formatCommand
 │       ├── permissions.ts # Command and workdir permission checks
 │       └── types.ts      # TypeScript type definitions
 ├── test/                 # 317+ tests covering unit, integration, and real processes

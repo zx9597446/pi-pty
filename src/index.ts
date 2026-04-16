@@ -94,10 +94,18 @@ async function handlePtyExit(pi: any, info: PTYSessionInfo, exitCode: number | n
   if (!notify) return;
   
   try {
-    const readResult = manager.read(info.id);
-    const totalLines = readResult?.totalLines ?? 0;
-    const lastLineResult = totalLines > 0 ? manager.read(info.id, totalLines - 1, 1) : null;
-    const lastLine = lastLineResult?.lines[0]?.slice(0, 250) ?? '(no output)';
+    // Basic info from manager (fast memory access)
+    const currentSession = manager.get(info.id);
+    const totalLines = currentSession?.lineCount ?? 0;
+    
+    // We try to get the last line, but if buffer access is somehow slow, we use a fallback
+    let lastLine = '(no output)';
+    try {
+      const lastLineResult = totalLines > 0 ? manager.read(info.id, totalLines - 1, 1) : null;
+      lastLine = lastLineResult?.lines[0]?.slice(0, 250) ?? '(no output)';
+    } catch {
+      // Fallback if read fails or is too slow
+    }
     
     const message = [
       `<pty_exited>`,
@@ -107,21 +115,26 @@ async function handlePtyExit(pi: any, info: PTYSessionInfo, exitCode: number | n
       `Exit Code: ${exitCode}`,
       `Duration: ${info.durationMs ?? 'unknown'}ms`,
       `Lines: ${totalLines}`,
-      `Last line: ${lastLine}`,
+      `Last line: ${stripAnsi(lastLine).trim()}`,
       `</pty_exited>`,
       HINTS.EXIT(exitCode)
     ].join('\n');
 
-    await pi.sendMessage({
-      role: 'assistant',
-      content: [{ type: 'text', text: message }]
-    });
+    // Fire and forget, or at least don't let it hang the whole process
+    setTimeout(async () => {
+      try {
+        if (typeof pi?.sendMessage === 'function') {
+          await pi.sendMessage({
+            role: 'assistant',
+            content: [{ type: 'text', text: message }]
+          });
+        }
+      } catch (err) {
+        console.error(`Failed to send exit message for ${info.id}:`, err);
+      }
+    }, 50);
   } catch (err) {
     console.error(`Error in pty ${info.id} onExit callback:`, err);
-    await pi.sendMessage({
-      role: 'assistant',
-      content: [{ type: 'text', text: `<pty_error id="${info.id}">Failed to send exit notification: ${err instanceof Error ? err.message : String(err)}</pty_error>` }]
-    }).catch(innerErr => console.error('Fatal error in pty error handler:', innerErr));
   }
 }
 
@@ -155,8 +168,17 @@ export default function (pi: any) {
           notifyOnExit: args.notifyOnExit,
         },
         () => {},
-        (exitCode) => handlePtyExit(pi, info, exitCode, !!info.notifyOnExit)
+        (exitCode) => {
+          // Defer to next tick to ensure 'info' is assigned and current tool execution finishes
+          setImmediate(() => {
+            handlePtyExit(pi, manager.get(info.id) || info, exitCode, !!info.notifyOnExit);
+          });
+        }
       );
+
+      // Check if process exited immediately (sync check)
+      const currentStatus = manager.get(info.id);
+      const isInstantExit = currentStatus && currentStatus.status !== 'running';
 
       const output = [
         `<pty_spawned>`,
@@ -165,14 +187,29 @@ export default function (pi: any) {
         `Command: ${formatCommand(info.command, info.args)}`,
         `PID: ${info.pid}`,
         `Status: ${info.status}`,
+        isInstantExit ? `Exit Code: ${currentStatus.exitCode}` : '',
         `</pty_spawned>`,
         '',
-        HINTS.SPAWN,
-      ].join('\n');
+        isInstantExit ? HINTS.EXIT(currentStatus.exitCode) : HINTS.SPAWN,
+      ].filter(Boolean).join('\n');
+
+      // Return only serializable fields in details
+      const serializableInfo = {
+        id: info.id,
+        title: info.title,
+        command: info.command,
+        args: info.args,
+        workdir: info.workdir,
+        pid: info.pid,
+        status: info.status,
+        createdAt: info.createdAt,
+        lineCount: info.lineCount,
+        durationMs: info.durationMs
+      };
 
       return {
         content: [{ type: "text", text: output }],
-        details: info
+        details: serializableInfo
       };
     },
   });
@@ -271,14 +308,21 @@ export default function (pi: any) {
       const session = manager.get(args.id);
       if (!session || session.status !== 'running') throw new Error(`Active session '${args.id}' not found.`);
 
-      manager.addWatcher(args.id, new RegExp(args.pattern, args.ignoreCase ? 'i' : ''), async (matchData, count) => {
+      manager.addWatcher(args.id, new RegExp(args.pattern, args.ignoreCase ? 'i' : ''), (matchData, count) => {
         const message = [
           `<pty_match id="${args.id}" pattern="${args.pattern}"${count > 1 ? ` count="${count}"` : ''}>`,
           `Match: "${stripAnsi(matchData).trim()}"`,
           `</pty_match>`,
           HINTS.MATCH(args.pattern)
         ].join('\n');
-        await pi.sendMessage({ role: 'assistant', content: [{ type: 'text', text: message }] });
+        
+        setImmediate(async () => {
+          try {
+            await pi.sendMessage({ role: 'assistant', content: [{ type: 'text', text: message }] });
+          } catch (err) {
+            console.error('Failed to send watch match notification:', err);
+          }
+        });
       }, args.persistent, args.throttleMs ?? 5000);
 
       return { content: [{ type: "text", text: `Watching ${args.id} for "${args.pattern}"` }] };
@@ -300,7 +344,7 @@ export default function (pi: any) {
   });
 
   // pty_list tool
-  pi.registerTool({
+pi.registerTool({
     name: "pty_list",
     description: "List all PTY sessions.",
     parameters: Type.Object({}),
@@ -309,7 +353,24 @@ export default function (pi: any) {
       if (sessions.length === 0) return { content: [{ type: "text", text: '<pty_list>\nNo active PTY sessions.\n</pty_list>' }] };
 
       const lines = ['<pty_list>', ...sessions.flatMap(s => formatSessionInfo(s)), `Total: ${sessions.length}`, '</pty_list>'];
-      return { content: [{ type: "text", text: lines.join('\n') }], details: sessions };
+      
+      // Clean sessions for serialization
+      const serializableSessions = sessions.map(s => ({
+        id: s.id,
+        title: s.title,
+        command: s.command,
+        args: s.args,
+        workdir: s.workdir,
+        pid: s.pid,
+        status: s.status,
+        exitCode: s.exitCode,
+        exitSignal: s.exitSignal,
+        createdAt: s.createdAt,
+        lineCount: s.lineCount,
+        durationMs: s.durationMs
+      }));
+
+      return { content: [{ type: "text", text: lines.join('\n') }], details: serializableSessions };
     },
   });
 
