@@ -65,7 +65,7 @@ describe('PTYManager - Full Integration', () => {
       expect(info.command).toBe('ls');
       expect(info.args).toEqual([]);
       expect(info.status).toBe('running');
-      expect(info.notifyOnExit).toBe(false);
+      expect(info.notifyOnExit).toBe(true);
       expect(info.pid).toBeGreaterThan(0);
       expect(info.workdir).toBeDefined();
       expect(info.lineCount).toBe(0);

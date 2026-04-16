@@ -27,13 +27,13 @@ export function checkCommandPermission(command: string, args: string[]): void {
 }
 
 export function checkWorkdirPermission(workdir: string): void {
-  if (!config.allowedDirectories) return;
+  const allowed = config.allowedDirectories;
+  if (!allowed || allowed.length === 0) return;
 
   const absoluteWorkdir = path.resolve(workdir);
-  const isAllowed = config.allowedDirectories.some(allowedDir => {
-    const absoluteAllowed = path.resolve(allowedDir);
-    const relative = path.relative(absoluteAllowed, absoluteWorkdir);
-    return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));
+  const isAllowed = allowed.some(dir => {
+    const relative = path.relative(path.resolve(dir), absoluteWorkdir);
+    return !relative.startsWith('..') && !path.isAbsolute(relative);
   });
 
   if (!isAllowed) {

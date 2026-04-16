@@ -1,5 +1,6 @@
 import { spawn, type IPty } from 'zigpty';
 import { RingBuffer } from './buffer.js';
+import { formatCommand } from './formatters.js';
 import type { PTYSession, PTYSessionInfo, SpawnOptions } from './types.js';
 import * as crypto from 'crypto';
 
@@ -12,32 +13,26 @@ function generateId(): string {
 }
 
 export class SessionLifecycleManager {
-  private sessions: Map<string, PTYSession> = new Map();
+  private sessions = new Map<string, PTYSession>();
 
   private createSessionObject(opts: SpawnOptions): PTYSession {
     const id = generateId();
     const args = opts.args ?? [];
     const workdir = opts.workdir ?? process.cwd();
-    const title =
-      opts.title ?? (`${opts.command} ${args.join(' ')}`.trim() || `Terminal ${id.slice(-4)}`);
+    const title = opts.title ?? (formatCommand(opts.command, args) || `Terminal ${id.slice(-4)}`);
 
-    const buffer = new RingBuffer();
     return {
+      ...opts,
       id,
       title,
-      description: opts.description,
-      command: opts.command,
       args,
       workdir,
-      env: opts.env,
       status: 'running',
-      pid: 0, // will be set after spawn
+      pid: 0,
       createdAt: new Date(),
-      parentSessionId: opts.parentSessionId,
-      parentAgent: opts.parentAgent,
-      notifyOnExit: opts.notifyOnExit ?? false,
-      buffer,
-      process: null, // will be set
+      notifyOnExit: opts.notifyOnExit ?? true,
+      buffer: new RingBuffer(),
+      process: null,
     };
   }
 
@@ -47,33 +42,27 @@ export class SessionLifecycleManager {
     onExit: (session: PTYSession, exitCode: number | null) => void
   ): void {
     const env = { ...process.env, ...session.env } as Record<string, string>;
-    const ptyProcess: IPty = spawn(session.command, session.args, {
+    
+    session.process = spawn(session.command, session.args, {
       cols: DEFAULT_TERMINAL_COLS,
       rows: DEFAULT_TERMINAL_ROWS,
       cwd: session.workdir,
       env,
-      onExit: (exitCode: number, signal: number) => {
-        // Flush any remaining incomplete line in the buffer
-        session.buffer.flush();
-
-        if (session.status === 'killing') {
-          session.status = 'killed';
-        } else {
-          session.status = 'exited';
-        }
+      onExit: (exitCode: number, signal?: number) => {
+        session.status = session.status === 'killing' ? 'killed' : 'exited';
         session.exitCode = exitCode;
+        session.exitSignal = signal;
         onExit(session, exitCode);
       }
     });
 
-    ptyProcess.onData((data: string | Buffer) => {
-      const strData = typeof data === 'string' ? data : data.toString();
+    session.process.onData((data: string | Buffer) => {
+      const strData = data.toString();
       session.buffer.append(strData);
       onData(session, strData);
     });
 
-    session.process = ptyProcess;
-    session.pid = ptyProcess.pid;
+    session.pid = session.process.pid;
   }
 
   spawn(
@@ -89,29 +78,22 @@ export class SessionLifecycleManager {
 
   kill(id: string, cleanup: boolean = false): boolean {
     const session = this.sessions.get(id);
-    if (!session) {
-      return false;
-    }
+    if (!session) return false;
 
     if (session.status === 'running') {
       session.status = 'killing';
-      try {
-        session.process?.kill();
-      } catch {
-        // Ignore kill errors
-      }
+      try { session.process?.kill(); } catch {}
     }
 
     if (cleanup) {
       session.buffer.clear();
       this.sessions.delete(id);
     }
-
     return true;
   }
 
   clearAllSessions(): void {
-    for (const id of Array.from(this.sessions.keys())) {
+    for (const id of this.sessions.keys()) {
       this.kill(id, true);
     }
   }
@@ -124,29 +106,23 @@ export class SessionLifecycleManager {
     }
   }
 
-  getSession(id: string): PTYSession | null {
-    return this.sessions.get(id) || null;
-  }
+  getSession = (id: string) => this.sessions.get(id) || null;
 
-  listSessions(): PTYSession[] {
-    return Array.from(this.sessions.values());
-  }
+  listSessions = () => Array.from(this.sessions.values());
 
   toInfo(session: PTYSession): PTYSessionInfo {
+    const { createdAt, exitCode, buffer, ...rest } = session;
+    const durationMs = exitCode !== undefined 
+      ? Date.now() - createdAt.getTime() 
+      : undefined;
+
     return {
-      id: session.id,
-      title: session.title,
-      description: session.description,
-      command: session.command,
-      args: session.args,
-      workdir: session.workdir,
+      ...rest,
       status: session.status,
-      notifyOnExit: session.notifyOnExit,
-      exitCode: session.exitCode,
-      exitSignal: session.exitSignal,
-      pid: session.pid,
-      createdAt: session.createdAt.toISOString(),
-      lineCount: session.buffer.length,
+      exitCode,
+      createdAt: createdAt.toISOString(),
+      lineCount: buffer.length,
+      durationMs,
     };
   }
 }

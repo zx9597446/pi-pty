@@ -39,11 +39,11 @@ describe('OutputManager', () => {
       expect((session.process as any).write).toHaveBeenCalledWith('ls\n');
     });
 
-    it('should return true even if process.write throws', () => {
+    it('should return false if process.write throws', () => {
       const session = createMockSession();
       (session.process as any).write = vi.fn(() => { throw new Error('fail'); });
       const success = outputManager.write(session, 'data');
-      expect(success).toBe(true);
+      expect(success).toBe(false);
     });
 
     it('should return true when process is null', () => {

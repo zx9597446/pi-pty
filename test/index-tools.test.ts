@@ -95,11 +95,15 @@ describe('index.ts tool execute functions', () => {
       expect(result.content[0].text).toContain('ID: pty_');
       expect(result.content[0].text).toContain('Title: Dev Server');
       expect(result.content[0].text).toContain('Command: npm run dev');
-      expect(result.content[0].text).toContain('Workdir: /tmp/project');
+      expect(result.content[0].text).not.toContain('Workdir:');
       expect(result.content[0].text).toContain('PID: ');
       expect(result.content[0].text).toContain('Status: running');
-      expect(result.content[0].text).toContain('NotifyOnExit: false');
+      expect(result.content[0].text).not.toContain('NotifyOnExit:');
       expect(result.content[0].text).toContain('</pty_spawned>');
+      expect(result.content[0].text).toContain('<system_reminder>');
+      expect(result.content[0].text).toContain('ASYNC:');
+      expect(result.content[0].text).toContain('WATCH:');
+      expect(result.content[0].text).toContain('READ:');
     });
 
     it('should include notify instructions when notifyOnExit is true', async () => {
@@ -110,9 +114,8 @@ describe('index.ts tool execute functions', () => {
         notifyOnExit: true,
       }, { sessionId: 's1' });
 
-      expect(result.content[0].text).toContain('NotifyOnExit: true');
       expect(result.content[0].text).toContain('<system_reminder>');
-      expect(result.content[0].text).toContain('pty_exited');
+      expect(result.content[0].text).toContain('Wait for <pty_exited> notification');
     });
 
     it('should throw on blocked command', async () => {
@@ -233,6 +236,8 @@ describe('index.ts tool execute functions', () => {
       expect(result.content[0].text).toContain('[3] line three');
       expect(result.content[0].text).toContain('End of buffer');
       expect(result.content[0].text).toContain('</pty_output>');
+      expect(result.content[0].text).toContain('<system_reminder>');
+      expect(result.content[0].text).toContain('NEXT:');
     });
 
     it('should handle empty buffer', async () => {
@@ -345,7 +350,8 @@ describe('index.ts tool execute functions', () => {
       const listTool = mockPi.getTool('pty_list')!;
       const result = await listTool.execute('tc4', {});
 
-      expect(result.content[0].text).toContain('Total: 2 session(s)');
+      expect(result.content[0].text).toContain('Total: 2');
+      expect(result.content[0].text).not.toContain('session(s)');
       expect(result.content[0].text).toContain('Dev');
       expect(result.content[0].text).toContain('Server');
     });
@@ -370,11 +376,7 @@ describe('index.ts tool execute functions', () => {
       const killTool = mockPi.getTool('pty_kill')!;
       const result = await killTool.execute('tc2', { id });
 
-      expect(result.content[0].text).toContain('<pty_killed>');
-      expect(result.content[0].text).toContain(id);
-      expect(result.content[0].text).toContain('Test Session');
-      expect(result.content[0].text).toContain('session retained for log access');
-      expect(result.content[0].text).toContain('</pty_killed>');
+      expect(result.content[0].text).toBe(`<pty_killed id="${id}" cleanup="undefined" />`);
     });
 
     it('should cleanup session when cleanup is true', async () => {
@@ -389,7 +391,7 @@ describe('index.ts tool execute functions', () => {
       const killTool = mockPi.getTool('pty_kill')!;
       const result = await killTool.execute('tc4', { id, cleanup: true });
 
-      expect(result.content[0].text).toContain('session removed');
+      expect(result.content[0].text).toBe(`<pty_killed id="${id}" cleanup="true" />`);
 
       // Verify session is gone
       const listTool = mockPi.getTool('pty_list')!;
@@ -423,8 +425,7 @@ describe('index.ts tool execute functions', () => {
         pattern: 'READY',
       });
 
-      expect(watchResult.content[0].text).toContain('Started watching');
-      expect(watchResult.content[0].text).toContain('READY');
+      expect(watchResult.content[0].text).toBe(`Watching ${id} for "READY"`);
 
       // Emit matching data
       const pty = getLastPty();
@@ -490,15 +491,15 @@ describe('index.ts tool execute functions', () => {
       );
       expect(exitMsg).toBeDefined();
       expect(exitMsg.content[0].text).toContain('Exit Code: 1');
-      expect(exitMsg.content[0].text).toContain('Non-zero exit detected');
-      expect(exitMsg.content[0].text).toContain('pty_read');
+      expect(exitMsg.content[0].text).toContain('DIAGNOSE: Exit code 1 is non-zero');
+      expect(exitMsg.content[0].text).toContain('pty_read(pattern=\'Error|Fail|Exception\')');
     });
   });
 
   describe('pty_read notifyOnExit reminder', () => {
     beforeEach(async () => { await registerTools(); });
 
-    it('should append reminder when notifyOnExit is true and session is running', async () => {
+    it('should always include navigation hints in system_reminder if session is running', async () => {
       const spawnTool = mockPi.getTool('pty_spawn')!;
       const spawnResult = await spawnTool.execute('tc1', {
         command: 'test',
@@ -515,27 +516,8 @@ describe('index.ts tool execute functions', () => {
       const result = await readTool.execute('tc2', { id });
 
       expect(result.content[0].text).toContain('<system_reminder>');
-      expect(result.content[0].text).toContain('notifyOnExit=true');
-      expect(result.content[0].text).toContain('pty_exited');
-    });
-
-    it('should not append reminder when notifyOnExit is false', async () => {
-      const spawnTool = mockPi.getTool('pty_spawn')!;
-      const spawnResult = await spawnTool.execute('tc3', {
-        command: 'test',
-        description: 'd',
-        notifyOnExit: false,
-      }, { sessionId: 's1' });
-
-      const id = spawnResult.content[0].text.match(/ID: (pty_[0-9a-f]+)/)![1];
-
-      const pty = getLastPty();
-      pty.emitData('output\n');
-
-      const readTool = mockPi.getTool('pty_read')!;
-      const result = await readTool.execute('tc4', { id });
-
-      expect(result.content[0].text).not.toContain('<system_reminder>');
+      expect(result.content[0].text).toContain('NEXT:');
+      expect(result.content[0].text).toContain('TAIL:');
     });
   });
 
@@ -682,7 +664,7 @@ describe('index.ts tool execute functions', () => {
       const writeTool = mockPi.getTool('pty_write')!;
       await expect(
         writeTool.execute('tc2', { id, data: 'test' })
-      ).rejects.toThrow("session status is 'exited'");
+      ).rejects.toThrow(`Cannot write to PTY '${id}' (exited).`);
     });
   });
 });

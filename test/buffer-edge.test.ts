@@ -150,14 +150,6 @@ describe('RingBuffer edge cases', () => {
     });
   });
 
-  describe('flush (no-op)', () => {
-    it('flush should not throw', () => {
-      buffer.append('data\n');
-      buffer.flush();
-      expect(buffer.read()).toEqual(['data']);
-    });
-  });
-
   describe('byteLength and length', () => {
     it('byteLength reflects raw buffer size', () => {
       buffer.append('hello\nworld\n');

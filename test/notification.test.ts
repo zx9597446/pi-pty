@@ -85,7 +85,7 @@ describe('PTY Notification Integration', () => {
 
     expect(exitCall).toBeDefined();
     expect(exitCall.content[0].text).toContain('Exit Code: 42');
-    expect(exitCall.content[0].text).toContain('Non-zero exit detected');
-    expect(exitCall.content[0].text).toContain('Use `pty_read` with `pattern=\'Error|error|ERR\'`');
+    expect(exitCall.content[0].text).toContain('DIAGNOSE: Exit code 42 is non-zero');
+    expect(exitCall.content[0].text).toContain('pty_read(pattern=\'Error|Fail|Exception\')');
   });
 });

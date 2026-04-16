@@ -18,7 +18,23 @@ export class RingBuffer {
 
   append(data: string): void {
     if (!data) return;
-    this.buffer += data;
+    
+    // Filter only dangerous control characters to avoid binary junk
+    // We keep \n (0x0A), \r (0x0D), \t (0x09), and \x1b (0x1B) for ANSI
+    // We allow all printable characters including Unicode (CJK, Emoji, etc.)
+    // eslint-disable-next-line no-control-regex
+    let cleanData = data.replace(/[\x00-\x08\x0B\x0C\x0E-\x1A\x1C-\x1F\x7F]/g, '');
+    
+    // Simple progress bar suppression: 
+    // If a string contains \r followed by characters but no \n, 
+    // it's likely a terminal overwrite. We handle the most common case.
+    if (cleanData.includes('\r') && !cleanData.includes('\n')) {
+      const parts = cleanData.split('\r');
+      // Only keep the last update if multiple \r are in one chunk
+      cleanData = '\r' + parts[parts.length - 1];
+    }
+
+    this.buffer += cleanData;
     this.isDirty = true;
     
     if (this.buffer.length > this.maxSize) {
@@ -35,27 +51,23 @@ export class RingBuffer {
   }
 
   private splitBufferLines(): string[] {
-    if (!this.isDirty && this.cachedLines) {
-      return this.cachedLines;
+    if (this.isDirty || !this.cachedLines) {
+      const lines = this.buffer.split(/\r?\n/);
+      // Remove empty string at end if buffer ends with newline
+      if (lines.length > 0 && lines[lines.length - 1] === '') {
+        lines.pop();
+      }
+      this.cachedLines = lines;
+      this.isDirty = false;
     }
-
-    const lines: string[] = this.buffer.split(/\r?\n/);
-    // Remove empty string at end if buffer doesn't end with newline
-    if (lines.length && lines[lines.length - 1] === '') {
-      lines.pop();
-    }
-    
-    this.cachedLines = lines;
-    this.isDirty = false;
-    return lines;
+    return this.cachedLines;
   }
 
   read(offset: number = 0, limit?: number): string[] {
-    if (this.buffer === '') return [];
+    if (!this.buffer) return [];
     const lines = this.splitBufferLines();
     const start = Math.max(0, offset);
-    const end = limit !== undefined ? start + limit : lines.length;
-    return lines.slice(start, end);
+    return lines.slice(start, limit !== undefined ? start + limit : undefined);
   }
 
   readRaw(): string {
@@ -63,31 +75,22 @@ export class RingBuffer {
   }
 
   search(pattern: RegExp): SearchMatch[] {
-    const matches: SearchMatch[] = [];
-    const lines: string[] = this.splitBufferLines();
-
-    for (let i = 0; i < lines.length; i++) {
-      const line = lines[i];
+    const lines = this.splitBufferLines();
+    return lines.reduce<SearchMatch[]>((matches, line, index) => {
+      pattern.lastIndex = 0;
       if (line && pattern.test(line)) {
-        pattern.lastIndex = 0;
-        matches.push({ lineNumber: i + 1, text: line });
+        matches.push({ lineNumber: index + 1, text: line });
       }
-    }
-    return matches;
+      return matches;
+    }, []);
   }
 
   get length(): number {
-    if (this.buffer === '') return 0;
-    const lines = this.splitBufferLines();
-    return lines.length;
+    return this.buffer ? this.splitBufferLines().length : 0;
   }
 
   get byteLength(): number {
     return this.buffer.length;
-  }
-
-  flush(): void {
-    // No-op in new implementation
   }
 
   clear(): void {

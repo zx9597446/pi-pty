@@ -35,6 +35,7 @@ export interface PTYSessionInfo {
   pid: number;
   createdAt: string;
   lineCount: number;
+  durationMs?: number;
 }
 
 export interface SpawnOptions {

@@ -6,7 +6,7 @@ export class OutputManager {
       session.process?.write(data);
       return true;
     } catch {
-      return true; // allow write to exited process for tests
+      return false;
     }
   }
 

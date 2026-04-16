@@ -9,8 +9,8 @@ Ported from [opencode-pty](https://github.com/shekohex/opencode-pty), now powere
 - **Background execution** — spawn long-running processes (dev servers, repls, tail -f) without blocking the agent
 - **Interactive input** — send keystrokes, escape sequences, and control characters (`\x03` = Ctrl+C, `\x04` = Ctrl+D)
 - **Output buffering** — ring buffer with regex filtering, ANSI stripping, and pagination
-- **Exit notifications** — optional `<pty_exited>` messages with exit code, last line, and error hints
-- **Pattern watching** — async watch for specific output patterns with `pty_watch`
+- **Exit notifications** — automatic `<pty_exited>` messages with exit code, last line, and error hints
+- **Pattern watching** — async watch for specific output patterns with `pty_watch` (supports throttling for persistent alerts)
 - **Lightweight** — `zigpty` has zero native dependencies, no `node-gyp`, no Python/C++ toolchain
 
 ## Installation
@@ -28,14 +28,15 @@ pi install git:github.com/zx9597446/pi-pty
 
 ## Tools
 
-| Tool        | Description                                            |
-| ----------- | ------------------------------------------------------ |
-| `pty_spawn` | Spawn a new PTY session (background process)           |
-| `pty_write` | Write input/keystrokes to a session's stdin            |
-| `pty_read`  | Read output buffer with pagination and regex filtering |
-| `pty_list`  | List all active and exited PTY sessions                |
-| `pty_kill`  | Terminate a session, optionally clean up buffer        |
-| `pty_watch` | Async watch for a regex pattern in session output      |
+| Tool          | Description                                            |
+| ------------- | ------------------------------------------------------ |
+| `pty_spawn`   | Spawn a new PTY session (background process)           |
+| `pty_write`   | Write input/keystrokes to a session's stdin            |
+| `pty_read`    | Read output buffer with pagination and regex filtering |
+| `pty_list`    | List all active and exited PTY sessions                |
+| `pty_kill`    | Terminate a session, optionally clean up buffer        |
+| `pty_watch`   | Async watch for a regex pattern in session output      |
+| `pty_unwatch` | Stop watching a session for a specific pattern         |
 
 ### `pty_spawn`
 
@@ -49,7 +50,7 @@ Spawn a new PTY session.
 | `env`          | Record<string,string> |          | —              | Extra env vars (merged with `process.env`)       |
 | `title`        | string                |          | auto-generated | Human-readable session title                     |
 | `description`  | string                | ✓        | —              | 5–10 word description of what the session is for |
-| `notifyOnExit` | boolean               |          | `false`        | Send `<pty_exited>` message when process exits   |
+| `notifyOnExit` | boolean               |          | `true`         | Send `<pty_exited>` message when process exits   |
 
 ### `pty_write`
 
@@ -78,13 +79,24 @@ Read the session output buffer.
 
 ### `pty_watch`
 
-Watch a session for a regex pattern. Fires `<pty_match>` asynchronously when found (single-shot — removed after first match).
+Watch a session for a regex pattern. Fires `<pty_match>` asynchronously when found.
 
-| Parameter    | Type    | Description               |
-| ------------ | ------- | ------------------------- |
-| `id`         | string  | Session ID                |
-| `pattern`    | string  | Regex to watch for        |
-| `ignoreCase` | boolean | Case-insensitive matching |
+| Parameter    | Type    | Default | Description                                                                |
+| ------------ | ------- | ------- | -------------------------------------------------------------------------- |
+| `id`         | string  | —       | Session ID                                                                 |
+| `pattern`    | string  | —       | Regex to watch for                                                         |
+| `ignoreCase` | boolean | `false` | Case-insensitive matching                                                  |
+| `persistent` | boolean | `false` | If true, remains active after a match.                                     |
+| `throttleMs` | number  | `5000`  | For persistent watchers, min time between notifications (includes a count). |
+
+### `pty_unwatch`
+
+Stop watching a session for a specific pattern.
+
+| Parameter | Type   | Description                                          |
+| --------- | ------ | ---------------------------------------------------- |
+| `id`      | string | Session ID                                           |
+| `pattern` | string | Exact regex pattern string used when starting the watch |
 
 ### `pty_kill`
 
@@ -97,10 +109,11 @@ Watch a session for a regex pattern. Fires `<pty_match>` asynchronously when fou
 
 **User:** "Start the dev server and tell me when it's ready."
 
-1. Agent calls `pty_spawn(command: "npm", args: ["run", "dev"], notifyOnExit: true)` → `ID: pty_a1b2c3d4`
-2. Agent calls `pty_read(id: "pty_a1b2c3d4")` periodically to check logs
-3. Server crashes → agent receives `<pty_exited>` with non-zero exit code
-4. Agent calls `pty_kill(id: "pty_a1b2c3d4", cleanup: true)` when done
+1. Agent calls `pty_spawn(command: "npm", args: ["run", "dev"])` → `ID: pty_a1b2c3d4`
+2. Agent calls `pty_watch(id: "pty_a1b2c3d4", pattern: "ready on port")`
+3. Server ready → agent receives `<pty_match>` notification
+4. Server crashes → agent receives `<pty_exited>` with non-zero exit code
+5. Agent calls `pty_kill(id: "pty_a1b2c3d4", cleanup: true)` when done
 
 **User:** "Run a Python REPL and execute some code."
 
@@ -120,7 +133,7 @@ Watch a session for a regex pattern. Fires `<pty_match>` asynchronously when fou
 ```
 pi-pty/
 ├── src/
-│   ├── index.ts          # Extension entry point (registers 6 tools)
+│   ├── index.ts          # Extension entry point (registers 7 tools)
 │   └── pty/
 │       ├── manager.ts    # PTYManager — orchestrates lifecycle + output + watchers
 │       ├── lifecycle.ts  # SessionLifecycleManager — spawn/kill/process management
@@ -130,7 +143,7 @@ pi-pty/
 │       ├── formatters.ts # stripAnsi, formatLine, formatSessionInfo
 │       ├── permissions.ts # Command and workdir permission checks
 │       └── types.ts      # TypeScript type definitions
-├── test/                 # 291 tests across 18 test files
+├── test/                 # 317+ tests covering unit, integration, and real processes
 └── package.json
 ```
 
@@ -147,7 +160,8 @@ The original architecture (RingBuffer, SessionLifecycleManager, OutputManager, e
 
 - **`node-pty` → `zigpty`**: No native compilation, smaller footprint
 - **Full pi extension API**: `notifyOnExit`, `pty_watch`, `<pty_exited>` / `<pty_match>` messages
-- **Comprehensive test suite**: 291 tests covering unit, integration, and real PTY processes
+- **Throttled Watchers**: Persistent patterns now support `throttleMs` and match counts
+- **Comprehensive test suite**: 317+ tests covering unit, integration, and real PTY processes
 
 ## License
 
