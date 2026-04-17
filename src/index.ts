@@ -546,9 +546,19 @@ export default function (pi: any) {
         `- NEWLINE: Use newline=true to append \\n to your data. Smart: won't double-newline.`,
         `- SIGNALS: Use pty_signal(id='...', signal='SIGINT') for Ctrl+C or SIGTERM for graceful exit.`,
         `- UNICODE: Full UTF-8 support is enabled by default.`,
-        `</pty_manual>`
-      ].join('\n');
-      return { content: [{ type: "text", text: manual }] };
+      ];
+
+      if (process.platform === 'win32') {
+        manual.push(
+          ``,
+          `### LIMITATIONS: WINDOWS`,
+          `- INPUT: 'set /p' or some password prompts may NOT capture pty_write. Avoid interactive prompt scripts.`,
+          `- CTRL+C: Writing '\\x03' may not stop processes. Use pty_kill(id='...', cleanup=false) for reliable termination.`,
+        );
+      }
+
+      manual.push(`</pty_manual>`);
+      return { content: [{ type: 'text', text: manual.join('\n') }] };
     }
   });
 
