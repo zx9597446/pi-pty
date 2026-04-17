@@ -644,8 +644,8 @@ describe('index.ts tool execute functions', () => {
 
       // Spawn sessions, then call handler
       const spawnTool2 = mockPi.getTool('pty_spawn')!;
-      await spawnTool2.execute('tc1', { command: 'a', description: 'd' }, { sessionId: 's1' });
-      await spawnTool2.execute('tc2', { command: 'b', description: 'd' }, { sessionId: 's1' });
+      await spawnTool2.execute('tc1', { command: 'cmd.exe', args: ['/c', 'echo a'], description: 'd' }, { sessionId: 's1' });
+      await spawnTool2.execute('tc2', { command: 'cmd.exe', args: ['/c', 'echo b'], description: 'd' }, { sessionId: 's1' });
       expect(manager.list().length).toBeGreaterThanOrEqual(2);
 
       // Simulate agent_end

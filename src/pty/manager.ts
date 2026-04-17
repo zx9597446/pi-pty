@@ -53,6 +53,9 @@ export class PTYManager {
   }
 
   addWatcher(id: string, pattern: RegExp, callback: (match: string, count: number) => void, persistent: boolean = false, throttleMs: number = 0): void {
+    if (!this.lifecycleManager.getSession(id)) {
+      throw new Error(`PTY session '${id}' not found.`);
+    }
     if (!this.watchers.has(id)) {
       this.watchers.set(id, new Set());
     }

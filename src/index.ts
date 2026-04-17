@@ -4,6 +4,27 @@ import { formatCommand, formatLine, formatSessionInfo, stripAnsi } from './pty/f
 import { checkCommandPermission, checkWorkdirPermission } from './pty/permissions.js';
 import { parseEscapeSequences, ETX, EOT } from './pty/escape.js';
 import type { PTYSessionInfo, ReadResult, SearchResult } from './pty/types.js';
+import { existsSync } from 'fs';
+import { execSync } from 'child_process';
+import { resolve } from 'path';
+
+/**
+ * Check if a command is likely executable.
+ * Prevents zigpty from hanging on nonexistent commands.
+ */
+function isCommandExecutable(command: string): boolean {
+  if (!command || command.trim() === '') return false;
+  if (/[\\/:]/.test(command)) {
+    return existsSync(resolve(command));
+  }
+  try {
+    const checker = process.platform === 'win32' ? 'where.exe' : 'which';
+    execSync(`${checker} ${command}`, { stdio: ['pipe', 'pipe', 'pipe'], timeout: 5000 });
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 /**
  * Common navigation hints for different PTY states.
@@ -168,6 +189,12 @@ export default function (pi: any) {
       timeoutMs: Type.Optional(Type.Number({ description: 'Optional timeout in milliseconds after which the process is automatically killed.' })),
     }),
     async execute(toolCallId: string, args: any, ctx: any) {
+      if (!args.command || !args.command.trim()) {
+        throw new Error('pty_spawn: command cannot be empty.');
+      }
+      if (!isCommandExecutable(args.command)) {
+        throw new Error(`pty_spawn: command not found: ${args.command}`);
+      }
       checkCommandPermission(args.command, args.args ?? []);
       if (args.workdir) checkWorkdirPermission(args.workdir);
 
