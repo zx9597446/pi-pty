@@ -211,7 +211,7 @@ describe('SessionLifecycleManager deep tests', () => {
   });
 
   describe('write after exit', () => {
-    it('should still return true when writing to exited session', () => {
+    it('should return false when writing to exited session', () => {
       const info = manager.spawn(
         { command: 'test', parentSessionId: 'p', description: 'd' },
         () => {}, () => {}
@@ -220,9 +220,9 @@ describe('SessionLifecycleManager deep tests', () => {
       const pty = getMockPty();
       pty.emitExit(0);
 
-      // output.ts write returns true even for exited processes
+      // manager.write should check session status and reject exited sessions
       const result = manager.write(info.id, 'data');
-      expect(result).toBe(true);
+      expect(result).toBe(false);
     });
   });
 

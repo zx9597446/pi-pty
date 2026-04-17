@@ -1,6 +1,6 @@
 import { SessionLifecycleManager } from './lifecycle.js';
 import { OutputManager } from './output.js';
-import type { PTYSessionInfo, ReadResult, SearchResult, SpawnOptions, SessionEvent } from './types.js';
+import type { PTYSession, PTYSessionInfo, ReadResult, SearchResult, SpawnOptions, SessionEvent } from './types.js';
 import { stripAnsi } from './formatters.js';
 
 export type RawOutputCallback = (id: string, data: string) => void;
@@ -15,6 +15,7 @@ export interface Watcher {
   lastNotifyTime?: number;
   pendingCount: number;
   lastMatchData?: string;
+  matchBuffer: string[];
   timeout?: NodeJS.Timeout;
 }
 
@@ -55,13 +56,29 @@ export class PTYManager {
     if (!this.watchers.has(id)) {
       this.watchers.set(id, new Set());
     }
-    this.watchers.get(id)!.add({
+    const sessionWatchers = this.watchers.get(id)!;
+    const patternStr = pattern.source;
+    
+    // Check for duplicate pattern
+    for (const watcher of sessionWatchers) {
+      if (watcher.patternStr === patternStr) {
+        // Update existing watcher with new options
+        watcher.callback = callback;
+        watcher.persistent = persistent;
+        watcher.throttleMs = throttleMs;
+        watcher.pattern = pattern;
+        return;
+      }
+    }
+
+    sessionWatchers.add({
       pattern,
-      patternStr: pattern.source,
+      patternStr,
       callback,
       persistent,
       throttleMs,
-      pendingCount: 0
+      pendingCount: 0,
+      matchBuffer: []
     });
   }
 
@@ -93,6 +110,11 @@ export class PTYManager {
   private processWatcherMatch(watcher: Watcher, data: string, sessionWatchers: Set<Watcher>): void {
     watcher.lastMatchData = data;
     watcher.pendingCount++;
+    watcher.matchBuffer.push(data);
+    // Keep buffer reasonable
+    if (watcher.matchBuffer.length > 10) {
+      watcher.matchBuffer.shift();
+    }
 
     if (!watcher.persistent) {
       this.invokeWatcherCallback(watcher, data, 1);
@@ -106,52 +128,73 @@ export class PTYManager {
     if (throttleMs <= 0) {
       this.invokeWatcherCallback(watcher, data, 1);
       watcher.pendingCount = 0;
+      watcher.matchBuffer = [];
       return;
     }
 
     if (watcher.timeout) {
-      // Timer already running, just accumulating count
       return;
     }
 
     const timeSinceLast = now - (watcher.lastNotifyTime || 0);
     if (timeSinceLast >= throttleMs) {
-      // Enough time has passed, trigger immediately
-      this.invokeWatcherCallback(watcher, watcher.lastMatchData!, watcher.pendingCount);
+      const summary = watcher.matchBuffer.length > 1 
+        ? `${watcher.matchBuffer[0]} ... ${watcher.matchBuffer[watcher.matchBuffer.length - 1]}`
+        : data;
+      this.invokeWatcherCallback(watcher, summary, watcher.pendingCount);
       watcher.pendingCount = 0;
+      watcher.matchBuffer = [];
       watcher.lastNotifyTime = now;
     } else {
-      // Wait for throttle period
       const delay = throttleMs - timeSinceLast;
       watcher.timeout = setTimeout(() => {
         watcher.timeout = undefined;
-        if (watcher.pendingCount > 0 && watcher.lastMatchData) {
-          this.invokeWatcherCallback(watcher, watcher.lastMatchData, watcher.pendingCount);
+        if (watcher.pendingCount > 0) {
+          const summary = watcher.matchBuffer.length > 1 
+            ? `${watcher.matchBuffer[0]} ... ${watcher.matchBuffer[watcher.matchBuffer.length - 1]}`
+            : (watcher.lastMatchData || '');
+          this.invokeWatcherCallback(watcher, summary, watcher.pendingCount);
           watcher.pendingCount = 0;
+          watcher.matchBuffer = [];
           watcher.lastNotifyTime = Date.now();
         }
       }, delay);
     }
   }
 
-  private notifyRawOutput(id: string, data: string): void {
+  private notifyRawOutput(session: any, data: string): void {
     // 1. Notify static callbacks
     for (const callback of this.rawOutputCallbacks) {
       try {
-        callback(id, data);
+        callback(session.id, data);
       } catch (err) {
         console.error('Error in pty raw output callback:', err);
       }
     }
 
     // 2. Process watchers
-    const sessionWatchers = this.watchers.get(id);
+    const sessionWatchers = this.watchers.get(session.id);
     if (sessionWatchers && sessionWatchers.size > 0) {
-      const cleanData = stripAnsi(data);
-      for (const watcher of sessionWatchers) {
+      const cleanChunk = stripAnsi(data);
+      const recentLines = session.buffer.read(Math.max(0, session.buffer.length - 2));
+      const cleanRecentLines = recentLines.map((l: string) => stripAnsi(l));
+
+      for (const watcher of Array.from(sessionWatchers)) {
         watcher.pattern.lastIndex = 0;
-        if (watcher.pattern.test(cleanData)) {
-          this.processWatcherMatch(watcher, data, sessionWatchers);
+        
+        // Match against current clean chunk line-by-line first
+        const chunkLines = cleanChunk.split(/\r?\n/);
+        const chunkMatch = chunkLines.find(line => watcher.pattern.test(line));
+        
+        if (chunkMatch !== undefined) {
+          this.processWatcherMatch(watcher, chunkMatch, sessionWatchers);
+          continue;
+        }
+
+        // Check recent buffer lines for cross-chunk matches
+        const bufferMatch = cleanRecentLines.find((line: string) => watcher.pattern.test(line));
+        if (bufferMatch !== undefined) {
+          this.processWatcherMatch(watcher, bufferMatch, sessionWatchers);
         }
       }
     }
@@ -171,13 +214,14 @@ export class PTYManager {
     const info = this.lifecycleManager.spawn(
       opts,
       (session, data) => {
-        this.notifyRawOutput(session.id, data);
+        this.notifyRawOutput(session, data);
         onData(data);
       },
       (session, exitCode) => {
-        this.clearSessionWatchers(session.id);
         const event = session.status === 'killed' ? 'killed' as const : 'exited' as const;
         this.notifySessionUpdate(this.lifecycleManager.toInfo(session), event);
+        // Delay watcher cleanup to allow pending onData to process first
+        setTimeout(() => this.clearSessionWatchers(session.id), 100);
         onExit(exitCode);
       }
     );
@@ -187,7 +231,7 @@ export class PTYManager {
 
   write(id: string, data: string): boolean {
     const session = this.lifecycleManager.getSession(id);
-    if (!session) return false;
+    if (!session || session.status !== 'running') return false;
     return this.outputManager.write(session, data);
   }
 
@@ -245,6 +289,8 @@ export class PTYManager {
     for (const id of Array.from(this.watchers.keys())) {
       this.clearSessionWatchers(id);
     }
+    this.rawOutputCallbacks.clear();
+    this.sessionUpdateCallbacks.clear();
     this.lifecycleManager.clearAllSessions();
   }
 }

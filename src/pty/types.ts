@@ -12,13 +12,16 @@ export interface PTYSession {
   status: PTYStatus;
   exitCode?: number;
   exitSignal?: number | string;
+  exitedAt?: Date;
   pid: number;
   createdAt: Date;
   parentSessionId: string;
   parentAgent?: string;
   notifyOnExit: boolean;
+  timeoutMs?: number;
   buffer: any; // RingBuffer
   process: any; // IPty
+  decoder?: any; // StringDecoder
 }
 
 export interface PTYSessionInfo {
@@ -36,6 +39,7 @@ export interface PTYSessionInfo {
   createdAt: string;
   lineCount: number;
   durationMs?: number;
+  timeoutMs?: number;
 }
 
 export interface SpawnOptions {
@@ -48,6 +52,7 @@ export interface SpawnOptions {
   parentSessionId: string;
   parentAgent?: string;
   notifyOnExit?: boolean;
+  timeoutMs?: number;
 }
 
 export interface ReadResult {

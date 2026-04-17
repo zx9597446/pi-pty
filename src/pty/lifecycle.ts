@@ -3,6 +3,7 @@ import { RingBuffer } from './buffer.js';
 import { formatCommand } from './formatters.js';
 import type { PTYSession, PTYSessionInfo, SpawnOptions } from './types.js';
 import * as crypto from 'crypto';
+import { StringDecoder } from 'string_decoder';
 
 const DEFAULT_TERMINAL_COLS = 120;
 const DEFAULT_TERMINAL_ROWS = 40;
@@ -14,6 +15,7 @@ function generateId(): string {
 
 export class SessionLifecycleManager {
   private sessions = new Map<string, PTYSession>();
+  private sessionTimers = new Map<string, NodeJS.Timeout>();
 
   private createSessionObject(opts: SpawnOptions): PTYSession {
     const id = generateId();
@@ -33,6 +35,7 @@ export class SessionLifecycleManager {
       notifyOnExit: opts.notifyOnExit ?? true,
       buffer: new RingBuffer(),
       process: null,
+      decoder: new StringDecoder('utf8'),
     };
   }
 
@@ -49,15 +52,23 @@ export class SessionLifecycleManager {
       cwd: session.workdir,
       env,
       onExit: (exitCode: number, signal?: number) => {
+        // Clear timeout if process exits naturally
+        const timer = this.sessionTimers.get(session.id);
+        if (timer) {
+          clearTimeout(timer);
+          this.sessionTimers.delete(session.id);
+        }
+
         session.status = session.status === 'killing' ? 'killed' : 'exited';
         session.exitCode = exitCode;
         session.exitSignal = signal;
+        session.exitedAt = new Date();
         onExit(session, exitCode);
       }
     });
 
     session.process.onData((data: string | Buffer) => {
-      const strData = data.toString();
+      const strData = Buffer.isBuffer(data) ? session.decoder.write(data) : data;
       session.buffer.append(strData);
       onData(session, strData);
     });
@@ -73,6 +84,15 @@ export class SessionLifecycleManager {
     const session = this.createSessionObject(opts);
     this.spawnProcess(session, onData, onExit);
     this.sessions.set(session.id, session);
+
+    if (opts.timeoutMs && opts.timeoutMs > 0) {
+      const timer = setTimeout(() => {
+        console.log(`PTY session ${session.id} timed out after ${opts.timeoutMs}ms. Killing...`);
+        this.kill(session.id, false);
+      }, opts.timeoutMs);
+      this.sessionTimers.set(session.id, timer);
+    }
+
     return this.toInfo(session);
   }
 
@@ -80,13 +100,31 @@ export class SessionLifecycleManager {
     const session = this.sessions.get(id);
     if (!session) return false;
 
+    // Clear timeout if explicitly killed
+    const timer = this.sessionTimers.get(id);
+    if (timer) {
+      clearTimeout(timer);
+      this.sessionTimers.delete(id);
+    }
+
     if (session.status === 'running') {
       session.status = 'killing';
-      try { session.process?.kill(); } catch {}
+      try { 
+        session.process?.kill(); 
+      } catch (e) { 
+        console.error('Failed to kill PTY process:', e);
+      }
     }
 
     if (cleanup) {
+      // Properly close the PTY before cleanup
+      try {
+        session.process?.close();
+      } catch (e) {
+        // Ignore close errors - process may have already exited
+      }
       session.buffer.clear();
+      session.process = null;
       this.sessions.delete(id);
     }
     return true;
@@ -111,10 +149,10 @@ export class SessionLifecycleManager {
   listSessions = () => Array.from(this.sessions.values());
 
   toInfo(session: PTYSession): PTYSessionInfo {
-    const { createdAt, exitCode, buffer, ...rest } = session;
-    const durationMs = exitCode !== undefined 
-      ? Date.now() - createdAt.getTime() 
-      : undefined;
+    const { createdAt, exitCode, exitedAt, buffer, ...rest } = session;
+    const durationMs = session.exitedAt
+      ? session.exitedAt.getTime() - createdAt.getTime()
+      : Date.now() - createdAt.getTime();
 
     return {
       ...rest,

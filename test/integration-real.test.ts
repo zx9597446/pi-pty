@@ -197,11 +197,19 @@ describe('Real PTY Integration', () => {
   });
 
   describe('pty_write (real commands)', () => {
-    it('should write to an interactive process', () => {
+    it('should write to an interactive process', async () => {
+      // On Windows, use a PowerShell command that reads stdin; on Unix, use cat
+      const cmd = process.platform === 'win32' 
+        ? 'powershell.exe' 
+        : 'cat';
+      const args = process.platform === 'win32'
+        ? ['-Command', '$input; exit']
+        : [];
+      
       const info = manager.spawn(
         {
-          command: process.platform === 'win32' ? 'cmd.exe' : 'cat',
-          args: [],
+          command: cmd,
+          args,
           parentSessionId: 'test',
           description: 'interactive test',
         },
@@ -216,16 +224,15 @@ describe('Real PTY Integration', () => {
       expect(writeResult).toBe(true);
 
       // Give it a moment to process
-      setTimeout(() => {
-        const readResult = manager.read(info.id);
-        expect(readResult).not.toBeNull();
-        manager.kill(info.id);
-      }, 500);
+      await new Promise(resolve => setTimeout(resolve, 500));
+      const readResult = manager.read(info.id);
+      expect(readResult).not.toBeNull();
+      manager.kill(info.id);
     });
   });
 
   describe('pty_read with search (real commands)', () => {
-    it('should search output from multi-line command', () => {
+    it('should search output from multi-line command', async () => {
       const info = manager.spawn(
         {
           command: process.platform === 'win32' ? 'cmd.exe' : 'sh',
@@ -240,12 +247,11 @@ describe('Real PTY Integration', () => {
       );
 
       // Give process time to complete
-      setTimeout(() => {
-        const result = manager.search(info.id, /ERROR/);
-        expect(result).not.toBeNull();
-        expect(result!.totalMatches).toBeGreaterThanOrEqual(1);
-        manager.kill(info.id);
-      }, 1000);
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      const result = manager.search(info.id, /ERROR/);
+      expect(result).not.toBeNull();
+      expect(result!.totalMatches).toBeGreaterThanOrEqual(1);
+      manager.kill(info.id);
     });
   });
 

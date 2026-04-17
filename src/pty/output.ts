@@ -11,10 +11,11 @@ export class OutputManager {
   }
 
   read(session: PTYSession, offset: number = 0, limit?: number): ReadResult {
-    const lines = session.buffer.read(offset, limit);
     const totalLines = session.buffer.length;
-    const hasMore = offset + lines.length < totalLines;
-    return { lines, totalLines, offset, hasMore };
+    const actualOffset = offset < 0 ? Math.max(0, totalLines + offset) : offset;
+    const lines = session.buffer.read(offset, limit);
+    const hasMore = actualOffset + lines.length < totalLines;
+    return { lines, totalLines, offset: actualOffset, hasMore };
   }
 
   search(session: PTYSession, pattern: RegExp, offset: number = 0, limit?: number): SearchResult {

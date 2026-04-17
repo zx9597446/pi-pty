@@ -33,8 +33,10 @@ pi install git:github.com/zx9597446/pi-pty
 | `pty_spawn`   | Spawn a new PTY session (background process)           |
 | `pty_write`   | Write input/keystrokes to a session's stdin            |
 | `pty_read`    | Read output buffer with pagination and regex filtering |
+| `pty_search` | Search buffer for regex pattern with match pagination |
 | `pty_list`    | List all active and exited PTY sessions                |
 | `pty_kill`    | Terminate a session, optionally clean up buffer        |
+| `pty_signal`  | Send signal (SIGINT, SIGTERM, SIGKILL) to process     |
 | `pty_watch`   | Async watch for a regex pattern in session output      |
 | `pty_unwatch` | Stop watching a session for a specific pattern         |
 | `pty_help`    | Get the strategy guide for managing PTY sessions       |
@@ -118,6 +120,28 @@ Get the strategy guide for managing PTY sessions. No parameters required.
 | `id`      | string  | —       | Session ID                              |
 | `cleanup` | boolean | `false` | If true, remove session and free buffer |
 
+### `pty_signal`
+
+Send a signal to the PTY process.
+
+| Parameter | Type   | Default | Description                                            |
+| --------- | ------ | ------- | ------------------------------------------------------ |
+| `id`      | string | —       | Session ID                                             |
+| `signal`  | string | —       | Signal: `SIGINT`, `CTRL_C`, `SIGTERM`, `SIGKILL`      |
+
+### `pty_search`
+
+Search the buffer for a regex pattern with match-based pagination.
+
+| Parameter    | Type    | Default | Description                                        |
+| ------------ | ------- | ------- | -------------------------------------------------- |
+| `id`         | string  | —       | Session ID                                         |
+| `pattern`    | string  | —       | Regex pattern to search for                        |
+| `offset`     | number  | `0`     | Starting match index (0-based)                     |
+| `limit`      | number  | `100`   | Max matches to return                               |
+| `ignoreCase` | boolean | `true`  | Case-insensitive matching                           |
+| `stripAnsi`  | boolean | `true`  | Strip ANSI escape sequences from output             |
+
 ## Example Workflow
 
 **User:** "Start the dev server and tell me when it's ready."
@@ -140,6 +164,19 @@ Get the strategy guide for managing PTY sessions. No parameters required.
 | Variable              | Default          | Description                                                                    |
 | --------------------- | ---------------- | ------------------------------------------------------------------------------ |
 | `PTY_MAX_BUFFER_SIZE` | `1000000` (~1MB) | Max output buffer size in characters. Oldest content is trimmed when exceeded. |
+
+## Known Limitations
+
+### Windows-Specific
+
+- **Interactive Input**: Some commands requiring direct TTY interaction (e.g., `set /p var=` in batch scripts) may not capture input reliably via ConPTY.
+- **Ctrl+C**: Sending `\x03` (Ctrl+C) to background processes may not always terminate them on Windows. Use `pty_kill` or `pty_signal` with `SIGTERM` instead.
+- **Shell Selection**: On Windows, the extension uses `cmd.exe` by default through zigpty. Commands may behave differently across shells (cmd/powershell/git-bash).
+
+### Cross-Platform
+
+- **Buffer Limits**: Large output streams are trimmed to prevent memory issues. Use `pattern` filtering in `pty_read` to find specific content.
+- **Timing**: Output may be delayed for very fast commands. For critical synchronization, use `pty_watch` instead of polling.
 
 ## Architecture
 

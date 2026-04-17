@@ -109,7 +109,7 @@ describe('PTY Watcher', () => {
     // First watcher throws
     manager.addWatcher(info.id, /test/, () => { throw new Error('BOOM'); });
     // Second watcher is fine
-    manager.addWatcher(info.id, /test/, () => { countB++; });
+    manager.addWatcher(info.id, /data/, () => { countB++; });
 
     ptyInstance.emitData('test data\n');
     

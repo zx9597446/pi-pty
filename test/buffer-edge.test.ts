@@ -94,9 +94,9 @@ describe('RingBuffer edge cases', () => {
   });
 
   describe('read offset/limit edge cases', () => {
-    it('negative offset clamped to 0', () => {
+    it('negative offset returns tail', () => {
       buffer.append('a\nb\n');
-      expect(buffer.read(-1)).toEqual(['a', 'b']);
+      expect(buffer.read(-1)).toEqual(['b']);
     });
 
     it('zero limit returns empty', () => {

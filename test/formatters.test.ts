@@ -115,6 +115,8 @@ describe('formatSessionInfo', () => {
       '  Status: running',
       '  PID: 1234',
       '  Lines: 42',
+      '  Duration: unknown',
+      '  Started: unknown',
       ''
     ]);
   });

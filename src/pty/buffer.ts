@@ -1,3 +1,5 @@
+import { stripAnsi } from './formatters.js';
+
 // Default buffer size in characters (approximately 1MB)
 const DEFAULT_MAX_BUFFER_SIZE = parseInt(process.env.PTY_MAX_BUFFER_SIZE || '1000000', 10);
 
@@ -21,23 +23,30 @@ export class RingBuffer {
     if (!data) return;
     
     // eslint-disable-next-line no-control-regex
-    let cleanData = data.replace(/[\x00-\x08\x0B\x0C\x0E-\x1A\x1C-\x1F\x7F]/g, '');
+    let cleanData = data.replace(/[\x00-\x06\x08\x0B\x0C\x0E-\x1A\x1C-\x1F\x7F]/g, '');
     
-    if (cleanData.includes('\r') && !cleanData.includes('\n')) {
-      const parts = cleanData.split('\r');
-      cleanData = '\r' + parts[parts.length - 1];
-    }
+    // Normalize \r\r\n to \n and \r\n to \n for internal storage
+    // We want to treat both as a single newline.
+    cleanData = cleanData.replace(/\r+\n/g, '\n');
 
     this.buffer += cleanData;
     this.isDirty = true;
     
     if (this.buffer.length > this.maxSize) {
       const excess = this.buffer.length - this.maxSize;
-      const nextNewline = this.buffer.indexOf('\n', excess);
+      let nextNewline = this.buffer.indexOf('\n', excess);
+      
       if (nextNewline !== -1 && nextNewline < this.buffer.length - 1) {
         this.buffer = this.buffer.slice(nextNewline + 1);
       } else {
-        this.buffer = this.buffer.slice(-this.maxSize);
+        // Safe slice that doesn't split surrogate pairs
+        let slicePos = this.buffer.length - this.maxSize;
+        const code = this.buffer.charCodeAt(slicePos);
+        if (code >= 0xDC00 && code <= 0xDFFF) {
+          // It's a low surrogate, move one forward to skip the partial pair
+          slicePos++;
+        }
+        this.buffer = this.buffer.slice(slicePos);
       }
       this.isDirty = true;
       this.cachedLines = null;
@@ -46,7 +55,8 @@ export class RingBuffer {
 
   private splitBufferLines(): string[] {
     if (this.isDirty || !this.cachedLines) {
-      const lines = this.buffer.split(/\r?\n/);
+      // Internal buffer now uses \n exclusively for line breaks
+      const lines = this.buffer.split('\n');
       if (lines.length > 0 && lines[lines.length - 1] === '') {
         lines.pop();
       }
@@ -60,7 +70,7 @@ export class RingBuffer {
   read(offset: number = 0, limit?: number): string[] {
     if (!this.buffer) return [];
     const lines = this.splitBufferLines();
-    const start = Math.max(0, offset);
+    const start = offset < 0 ? Math.max(0, lines.length + offset) : offset;
     return lines.slice(start, limit !== undefined ? start + limit : undefined);
   }
 
@@ -73,8 +83,9 @@ export class RingBuffer {
     const matches: SearchMatch[] = [];
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i];
+      const strippedLine = stripAnsi(line);
       pattern.lastIndex = 0;
-      if (line && pattern.test(line)) {
+      if (strippedLine && pattern.test(strippedLine)) {
         matches.push({ lineNumber: i + 1, text: line });
       }
     }

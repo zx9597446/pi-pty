@@ -7,7 +7,6 @@ import type { PTYSessionInfo, ReadResult, SearchResult } from './pty/types.js';
 
 /**
  * Common navigation hints for different PTY states.
- * Standardized to help the LLM navigate without additional prompt overhead.
  */
 const HINTS = {
   SPAWN: [
@@ -22,10 +21,18 @@ const HINTS = {
   READ: (total: number, nextOffset: number, limit: number) => [
     `<system_reminder>`,
     `- NEXT: Use \`offset=${nextOffset}\` and \`limit=${limit}\` to read more.`,
-    `- TAIL: Use \`offset=${Math.max(0, total - 100)}\` to read the most recent 100 lines.`,
+    `- TAIL: Use \`offset=-100\` to read the last 100 lines.`,
     `- SEARCH: Use \`pattern='...'\` to filter these ${total} lines for keywords.`,
-    `- PROMPT: If the last line ends with '?' or ':', the process might be waiting for input via \`pty_write\`.`,
+    `- PROMPT: If the last line looks like a prompt but has no newline, the process is waiting for \`pty_write\`.`,
     `</system_reminder>`,
+  ].join('\n'),
+
+  EMPTY: [
+    `<system_reminder>`,
+    `- WAIT: If the process just started, output might be delayed.`,
+    `- WRITE: If it's an interactive shell, try sending a command via \`pty_write\`.`,
+    `- FORCE: Some processes need a newline (\`\\n\`) or Ctrl+C (\`\\x03\`) to flush output.`,
+    `</system_reminder>`
   ].join('\n'),
 
   EXIT: (code: number | null) => [
@@ -67,16 +74,21 @@ function buildEmptyOutput(openTag: string, pattern: string | undefined, result: 
     `(No output available - buffer is empty)`,
     `Total lines: ${result.totalLines}`,
     `</pty_output>`,
+    '',
+    HINTS.EMPTY
   ];
 }
 
 function buildDataOutput(openTag: string, result: ReadResult | SearchResult, offset: number, doStrip: boolean): string[] {
   const isSearch = isSearchResult(result);
-  const items = isSearch ? result.matches : result.lines.map((line, i) => ({ lineNumber: result.offset + i + 1, text: line }));
+  const currentOffset = offset < 0 ? Math.max(0, result.totalLines + offset) : offset;
+  
+  const items = isSearch 
+    ? result.matches 
+    : result.lines.map((line, i) => ({ lineNumber: currentOffset + i + 1, text: line }));
   
   const formattedLines = items.map(item => {
-    const text = doStrip ? stripAnsi(item.text) : item.text;
-    return formatLine(text, item.lineNumber);
+    return formatLine(item.text, item.lineNumber, 2000, doStrip);
   });
 
   const pagination = isSearch
@@ -84,27 +96,28 @@ function buildDataOutput(openTag: string, result: ReadResult | SearchResult, off
         ? `(${result.matches.length} of ${result.totalMatches} matches shown.)`
         : `(${result.totalMatches} matches from ${result.totalLines} total lines)`)
     : (result.hasMore
-        ? `(Buffer has more lines. Current view ends at line ${result.offset + result.lines.length})`
+        ? `(Buffer has more lines. Current view ends at line ${currentOffset + result.lines.length})`
         : `(End of buffer - total ${result.totalLines} lines)`);
 
   return [openTag, ...formattedLines, '', pagination, `</pty_output>`];
 }
 
+// Flag to track if manager has been cleared
+let managerCleared = false;
+
 async function handlePtyExit(pi: any, info: PTYSessionInfo, exitCode: number | null, notify: boolean) {
-  if (!notify) return;
+  if (!notify || managerCleared) return;
   
   try {
-    // Basic info from manager (fast memory access)
     const currentSession = manager.get(info.id);
     const totalLines = currentSession?.lineCount ?? 0;
     
-    // We try to get the last line, but if buffer access is somehow slow, we use a fallback
     let lastLine = '(no output)';
     try {
       const lastLineResult = totalLines > 0 ? manager.read(info.id, totalLines - 1, 1) : null;
       lastLine = lastLineResult?.lines[0]?.slice(0, 250) ?? '(no output)';
     } catch {
-      // Fallback if read fails or is too slow
+      // ignore
     }
     
     const message = [
@@ -120,8 +133,9 @@ async function handlePtyExit(pi: any, info: PTYSessionInfo, exitCode: number | n
       HINTS.EXIT(exitCode)
     ].join('\n');
 
-    // Fire and forget, or at least don't let it hang the whole process
     setTimeout(async () => {
+      // Check again after timeout in case manager was cleared during the wait
+      if (managerCleared) return;
       try {
         if (typeof pi?.sendMessage === 'function') {
           await pi.sendMessage({
@@ -151,6 +165,7 @@ export default function (pi: any) {
       title: Type.Optional(Type.String({ description: 'Human-readable title for the session' })),
       description: Type.String({ description: 'Describe the intent of this session (5-10 words). This will be shown in pty_list.' }),
       notifyOnExit: Type.Optional(Type.Boolean({ description: 'If true, sends a notification when the process exits (default: true)', default: true })),
+      timeoutMs: Type.Optional(Type.Number({ description: 'Optional timeout in milliseconds after which the process is automatically killed.' })),
     }),
     async execute(toolCallId: string, args: any, ctx: any) {
       checkCommandPermission(args.command, args.args ?? []);
@@ -166,17 +181,16 @@ export default function (pi: any) {
           description: args.description,
           parentSessionId: ctx.sessionId,
           notifyOnExit: args.notifyOnExit,
+          timeoutMs: args.timeoutMs,
         },
         () => {},
         (exitCode) => {
-          // Defer to next tick to ensure 'info' is assigned and current tool execution finishes
           setImmediate(() => {
             handlePtyExit(pi, manager.get(info.id) || info, exitCode, !!info.notifyOnExit);
           });
         }
       );
 
-      // Check if process exited immediately (sync check)
       const currentStatus = manager.get(info.id);
       const isInstantExit = currentStatus && currentStatus.status !== 'running';
 
@@ -190,10 +204,9 @@ export default function (pi: any) {
         isInstantExit ? `Exit Code: ${currentStatus.exitCode}` : '',
         `</pty_spawned>`,
         '',
-        isInstantExit ? HINTS.EXIT(currentStatus.exitCode) : HINTS.SPAWN,
+        isInstantExit ? HINTS.EXIT(currentStatus.exitCode ?? null) : HINTS.SPAWN,
       ].filter(Boolean).join('\n');
 
-      // Return only serializable fields in details
       const serializableInfo = {
         id: info.id,
         title: info.title,
@@ -204,7 +217,8 @@ export default function (pi: any) {
         status: info.status,
         createdAt: info.createdAt,
         lineCount: info.lineCount,
-        durationMs: info.durationMs
+        durationMs: info.durationMs,
+        timeoutMs: info.timeoutMs,
       };
 
       return {
@@ -221,29 +235,53 @@ export default function (pi: any) {
     parameters: Type.Object({
       id: Type.String({ description: 'PTY session ID' }),
       data: Type.String({ description: 'Data to send' }),
-      isBase64: Type.Optional(Type.Boolean({ description: 'If true, data is treated as base64 encoded string', default: false })),
+      isBase64: Type.Optional(Type.Boolean({ description: 'If true, data is treated as base64 encoded string (default: false)', default: false })),
+      newline: Type.Optional(Type.Boolean({ description: 'If true, appends a newline character to data (default: false)', default: false })),
     }),
     async execute(toolCallId: string, args: any) {
       const session = manager.get(args.id);
       if (!session) throw new Error(`PTY session '${args.id}' not found.`);
       if (session.status !== 'running') throw new Error(`Cannot write to PTY '${args.id}' (${session.status}).`);
 
-      let rawData = args.isBase64 ? Buffer.from(args.data, 'base64').toString() : args.data;
-      const parsedData = parseEscapeSequences(rawData);
+      let rawData: string;
+      if (args.isBase64) {
+        // Correct base64 handling: preserve bytes
+        rawData = Buffer.from(args.data, 'base64').toString('binary');
+      } else {
+        rawData = args.data;
+      }
+
+      // Parse escape sequences ONLY for non-base64 input
+      const parsedData = args.isBase64 ? rawData : parseEscapeSequences(rawData);
+
+      // Append newline AFTER escape parsing to avoid double-newline issues
+      // e.g. data="hello\\n" + newline=true should become "hello\n", not "hello\n\n"
+      let finalData = parsedData;
+      if (args.newline) {
+        if (!finalData.endsWith('\n') && !finalData.endsWith('\r')) {
+          finalData += '\n';
+        }
+      }
+
+      // Normalize line endings for Windows shells (skip for base64 to preserve binary data)
+      if (!args.isBase64 && process.platform === 'win32') {
+        finalData = finalData.replace(/\r?\n/g, '\r\n');
+      }
       
-      const success = manager.write(args.id, parsedData);
+      const success = manager.write(args.id, finalData);
       if (!success) throw new Error(`Failed to write to PTY '${args.id}'.`);
 
-      const preview = rawData.length > 50 ? `${rawData.slice(0, 50)}...` : rawData;
+      // Preview logic (based on actual data sent)
+      const preview = finalData.length > 50 ? `${finalData.slice(0, 50)}...` : finalData;
       const displayPreview = preview
         .replace(new RegExp(ETX, 'g'), '^C')
         .replace(new RegExp(EOT, 'g'), '^D')
         .replace(/\n/g, '\\n')
         .replace(/\r/g, '\\r');
-      
+
       return {
-        content: [{ type: "text", text: `Sent ${rawData.length} bytes to ${args.id}: "${displayPreview}"` }],
-        details: { bytesSent: rawData.length }
+        content: [{ type: "text", text: `Sent ${finalData.length} bytes to ${args.id}: "${displayPreview}"` }],
+        details: { bytesSent: finalData.length }
       };
     },
   });
@@ -251,12 +289,12 @@ export default function (pi: any) {
   // pty_read tool
   pi.registerTool({
     name: "pty_read",
-    description: "Read PTY buffer with regex filtering and pagination.",
+    description: "Read PTY buffer with optional regex filtering. Note: when pattern is used, offset/limit paginate over matches, NOT lines.",
     parameters: Type.Object({
       id: Type.String({ description: 'PTY session ID' }),
-      offset: Type.Optional(Type.Number({ description: 'Starting line (0-based)' })),
-      limit: Type.Optional(Type.Number({ description: 'Max lines to read (default: 500)' })),
-      pattern: Type.Optional(Type.String({ description: 'Regex filter' })),
+      offset: Type.Optional(Type.Number({ description: 'Starting point (0-based, negative for tail). For search, this is the match index.' })),
+      limit: Type.Optional(Type.Number({ description: 'Max items to read (default: 500)' })),
+      pattern: Type.Optional(Type.String({ description: 'Regex filter. If set, returns matching lines only.' })),
       ignoreCase: Type.Optional(Type.Boolean({ description: 'Default: false' })),
       stripAnsi: Type.Optional(Type.Boolean({ description: 'Default: true', default: true })),
     }),
@@ -269,7 +307,7 @@ export default function (pi: any) {
       const doStrip = args.stripAnsi ?? true;
 
       const result = !!args.pattern
-        ? manager.search(args.id, new RegExp(args.pattern, args.ignoreCase ? 'i' : ''), offset, limit)
+        ? (() => { try { return manager.search(args.id, new RegExp(args.pattern, args.ignoreCase ? 'i' : ''), offset, limit); } catch (e: any) { throw new Error(`Invalid regex pattern '${args.pattern}': ${e.message}`); } })()
         : manager.read(args.id, offset, limit);
 
       if (!result) throw new Error(`Failed to read from PTY '${args.id}'.`);
@@ -284,13 +322,56 @@ export default function (pi: any) {
         : buildEmptyOutput(openTag, args.pattern, result);
 
       let outputText = outputLines.join('\n');
-      if (session.status === 'running') {
-        const nextOffset = offset + (isSearchResult(result) ? result.matches.length : result.lines.length);
+      if (isSearchResult(result)) {
+        if (result.hasMore) {
+          const nextOffset = result.offset + result.matches.length;
+          outputText += `\n\n${HINTS.READ(result.totalLines, nextOffset, limit)}`;
+        }
+      } else if (result.hasMore || session.status === 'running') {
+        const nextOffset = result.offset + result.lines.length;
         outputText += `\n\n${HINTS.READ(result.totalLines, nextOffset, limit)}`;
       }
 
       return { content: [{ type: "text", text: outputText }], details: result };
     },
+  });
+
+  // pty_search tool (dedicated search with match-based pagination)
+  pi.registerTool({
+    name: "pty_search",
+    description: "Search PTY buffer for a pattern. offset/limit paginate over matches (not lines).",
+    parameters: Type.Object({
+      id: Type.String({ description: 'PTY session ID' }),
+      pattern: Type.String({ description: 'Regex filter pattern' }),
+      offset: Type.Optional(Type.Number({ description: 'Starting match index (0-based, default 0)', default: 0 })),
+      limit: Type.Optional(Type.Number({ description: 'Max matches to return (default: 100)', default: 100 })),
+      ignoreCase: Type.Optional(Type.Boolean({ description: 'Default: true', default: true })),
+      stripAnsi: Type.Optional(Type.Boolean({ description: 'Default: true', default: true })),
+    }),
+    async execute(toolCallId: string, args: any) {
+      const session = manager.get(args.id);
+      if (!session) throw new Error(`PTY session '${args.id}' not found.`);
+
+      const offset = args.offset ?? 0;
+      const limit = args.limit ?? 100;
+      const doStrip = args.stripAnsi ?? true;
+      const result = (() => { try { return manager.search(args.id, new RegExp(args.pattern, args.ignoreCase ? 'i' : ''), offset, limit); } catch (e: any) { throw new Error(`Invalid regex pattern '${args.pattern}': ${e.message}`); } })();
+      if (!result) throw new Error(`Failed to search PTY '${args.id}'.`);
+
+      const openTag = `<pty_output id="${args.id}" status="${session.status}" pattern="${args.pattern}">`;
+      const hasData = result.matches.length > 0;
+      const outputLines = hasData
+        ? buildDataOutput(openTag, result, offset, doStrip)
+        : buildEmptyOutput(openTag, args.pattern, result);
+
+      let outputText = outputLines.join('\n');
+      if (result.hasMore) {
+        const nextOffset = result.offset + result.matches.length;
+        outputText += `\n\n${HINTS.READ(result.totalLines, nextOffset, limit)}`;
+      }
+
+      return { content: [{ type: 'text', text: outputText }], details: result };
+    }
   });
 
   // pty_watch tool
@@ -306,9 +387,17 @@ export default function (pi: any) {
     }),
     async execute(toolCallId: string, args: any) {
       const session = manager.get(args.id);
-      if (!session || session.status !== 'running') throw new Error(`Active session '${args.id}' not found.`);
+      if (!session) throw new Error(`Session '${args.id}' not found.`);
+      if (session.status !== 'running') throw new Error(`Session '${args.id}' is not running (status: ${session.status}).`);
 
-      manager.addWatcher(args.id, new RegExp(args.pattern, args.ignoreCase ? 'i' : ''), (matchData, count) => {
+      let patternRe: RegExp;
+      try {
+        patternRe = new RegExp(args.pattern, args.ignoreCase ? 'i' : '');
+      } catch (e: any) {
+        throw new Error(`Invalid regex pattern '${args.pattern}': ${e.message}`);
+      }
+
+      manager.addWatcher(args.id, patternRe, (matchData, count) => {
         const message = [
           `<pty_match id="${args.id}" pattern="${args.pattern}"${count > 1 ? ` count="${count}"` : ''}>`,
           `Match: "${stripAnsi(matchData).trim()}"`,
@@ -318,7 +407,9 @@ export default function (pi: any) {
         
         setImmediate(async () => {
           try {
-            await pi.sendMessage({ role: 'assistant', content: [{ type: 'text', text: message }] });
+            if (typeof pi?.sendMessage === 'function') {
+              await pi.sendMessage({ role: 'assistant', content: [{ type: 'text', text: message }] });
+            }
           } catch (err) {
             console.error('Failed to send watch match notification:', err);
           }
@@ -338,13 +429,20 @@ export default function (pi: any) {
       pattern: Type.String({ description: 'Regex used in pty_watch' }),
     }),
     async execute(toolCallId: string, args: any) {
-      if (!manager.removeWatcher(args.id, args.pattern)) throw new Error(`Watcher not found.`);
+      const session = manager.get(args.id);
+      if (!session) throw new Error(`PTY session '${args.id}' not found.`);
+      if (!manager.removeWatcher(args.id, args.pattern)) {
+        if (session.status !== 'running') {
+          return { content: [{ type: "text", text: `Session ${args.id} is already ${session.status}. Watchers were cleared.` }] };
+        }
+        throw new Error(`Watcher not found for pattern "${args.pattern}" on session ${args.id}.`);
+      }
       return { content: [{ type: "text", text: `Stopped watching "${args.pattern}" on ${args.id}` }] };
     },
   });
 
   // pty_list tool
-pi.registerTool({
+  pi.registerTool({
     name: "pty_list",
     description: "List all PTY sessions.",
     parameters: Type.Object({}),
@@ -354,7 +452,6 @@ pi.registerTool({
 
       const lines = ['<pty_list>', ...sessions.flatMap(s => formatSessionInfo(s)), `Total: ${sessions.length}`, '</pty_list>'];
       
-      // Clean sessions for serialization
       const serializableSessions = sessions.map(s => ({
         id: s.id,
         title: s.title,
@@ -364,7 +461,6 @@ pi.registerTool({
         pid: s.pid,
         status: s.status,
         exitCode: s.exitCode,
-        exitSignal: s.exitSignal,
         createdAt: s.createdAt,
         lineCount: s.lineCount,
         durationMs: s.durationMs
@@ -390,6 +486,44 @@ pi.registerTool({
     },
   });
 
+  // pty_signal tool
+  pi.registerTool({
+    name: "pty_signal",
+    description: "Send a signal to the PTY process (e.g., SIGINT, SIGTERM).",
+    parameters: Type.Object({
+      id: Type.String({ description: 'PTY session ID' }),
+      signal: Type.Union([
+        Type.Literal('SIGINT'),
+        Type.Literal('SIGTERM'),
+        Type.Literal('SIGKILL'),
+        Type.Literal('SIGBREAK'),
+        Type.Literal('CTRL_C'),
+      ], { description: 'Signal to send' }),
+    }),
+    async execute(toolCallId: string, args: any) {
+      const session = manager.get(args.id);
+      if (!session) throw new Error(`PTY session '${args.id}' not found.`);
+      if (session.status !== 'running') throw new Error(`Cannot send signal to PTY '${args.id}' (${session.status}).`);
+
+      // On Windows, zigpty/ConPTY might not support all Unix signals via .kill()
+      // But we can try to send the byte sequence for Ctrl+C if requested
+      if (args.signal === 'SIGINT' || args.signal === 'CTRL_C') {
+        manager.write(args.id, ETX);
+        return { content: [{ type: "text", text: `Sent CTRL_C (\\x03) to ${args.id}` }] };
+      }
+
+      // For SIGTERM/SIGKILL/SIGBREAK, attempt to terminate the process.
+      // Note: On Windows, these are best-effort; ConPTY may not differentiate them.
+      const success = manager.kill(args.id, false);
+      return { 
+        content: [{ type: "text", text: success 
+          ? `Sent ${args.signal} to ${args.id} (process termination requested)`
+          : `Failed to send ${args.signal} to ${args.id}` }],
+        details: { success }
+      };
+    },
+  });
+
   // pty_help tool
   pi.registerTool({
     name: "pty_help",
@@ -403,17 +537,24 @@ pi.registerTool({
         `- PROMPTS: If a process stalls without newline, it might be waiting for input (pty_write).`,
         ``,
         `### STRATEGY: DATA EXPLORATION`,
-        `- HEAD/TAIL: Use offset=0 for start, offset=TOTAL-100 for end.`,
+        `- HEAD/TAIL: Use offset=0 for start, offset=-100 for tail.`,
         `- FILTER: Massive logs? Use pty_read(pattern='...') to find needles in haystacks.`,
+        `- COLORS: Output look messy? Use stripAnsi=true (default) in pty_read. Want colors? Set to false.`,
         ``,
         `### STRATEGY: ROBUST INPUT`,
-        `- BASE64: For scripts or complex strings, use pty_write(isBase64=true) to avoid shell escape hell.`,
-        `- SIGNALS: Send \x03 for Ctrl+C, \x04 for Ctrl+D.`,
+        `- BASE64: For binary or complex scripts, use pty_write(isBase64=true).`,
+        `- NEWLINE: Use newline=true to append \\n to your data. Smart: won't double-newline.`,
+        `- SIGNALS: Use pty_signal(id='...', signal='SIGINT') for Ctrl+C or SIGTERM for graceful exit.`,
+        `- UNICODE: Full UTF-8 support is enabled by default.`,
         `</pty_manual>`
       ].join('\n');
       return { content: [{ type: "text", text: manual }] };
     }
   });
 
-  pi.on('agent_end', () => manager.clearAll());
+  // Set flag before clearing to prevent pending callbacks from running
+  pi.on('agent_end', () => {
+    managerCleared = true;
+    manager.clearAll();
+  });
 }
