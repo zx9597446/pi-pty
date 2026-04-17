@@ -519,13 +519,10 @@ export default function (pi: any) {
     description: "Send a signal to the PTY process (e.g., SIGINT, SIGTERM).",
     parameters: Type.Object({
       id: Type.String({ description: 'PTY session ID' }),
-      signal: Type.Union([
-        Type.Literal('SIGINT'),
-        Type.Literal('SIGTERM'),
-        Type.Literal('SIGKILL'),
-        Type.Literal('SIGBREAK'),
-        Type.Literal('CTRL_C'),
-      ], { description: 'Signal to send' }),
+      signal: Type.String({
+        enum: ['SIGINT', 'SIGTERM', 'SIGKILL', 'SIGBREAK', 'CTRL_C'],
+        description: 'Signal to send (SIGINT or CTRL_C for Ctrl+C, SIGTERM/SIGKILL/SIGBREAK for termination)'
+      }),
     }),
     async execute(toolCallId: string, args: any) {
       const session = manager.get(args.id);
