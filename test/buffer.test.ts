@@ -52,4 +52,24 @@ describe('RingBuffer', () => {
     expect(buffer.length).toBe(0);
     expect(buffer.readRaw()).toBe('');
   });
+
+  it('should collapse consecutive newlines to prevent buffer bloat', () => {
+    buffer = new RingBuffer(1000);
+    // Simulate PTY sending multiple consecutive newlines
+    buffer.append('line1\n\n\n\nline2\n');
+    
+    const lines = buffer.read();
+    // Multiple consecutive newlines should be collapsed to single newline
+    expect(lines).toEqual(['line1', 'line2']);
+    expect(buffer.length).toBe(2);
+  });
+
+  it('should preserve single newlines', () => {
+    buffer = new RingBuffer(1000);
+    buffer.append('line1\nline2\nline3\n');
+    
+    const lines = buffer.read();
+    expect(lines).toEqual(['line1', 'line2', 'line3']);
+    expect(buffer.length).toBe(3);
+  });
 });

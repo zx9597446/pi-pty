@@ -88,8 +88,9 @@ describe('RingBuffer edge cases', () => {
 
     it('should handle only newlines', () => {
       buffer.append('\n\n\n');
-      // splits to ['', '', '', ''] → remove trailing empty → ['', '', '']
-      expect(buffer.read()).toEqual(['', '', '']);
+      // consecutive newlines are collapsed to single, so '\n\n\n' → '\n'
+      // '\n' splits to ['', ''] → remove trailing empty → ['']
+      expect(buffer.read()).toEqual(['']);
     });
   });
 

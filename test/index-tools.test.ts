@@ -373,9 +373,10 @@ describe('index.ts tool execute functions', () => {
 
       const readTool = mockPi.getTool('pty_read')!;
       
-      // Without skipEmpty, should show all lines including empty ones
+      // Without skipEmpty, consecutive newlines are collapsed to single,
+      // so '\n\nhello\n\nworld\n' → '\nhello\nworld\n' = 3 lines (empty, hello, world)
       const resultAll = await readTool.execute('tc_se_2', { id });
-      expect(resultAll.details?.totalLines).toBeGreaterThanOrEqual(5);
+      expect(resultAll.details?.totalLines).toBe(3);
       
       // With skipEmpty, should only show non-empty lines
       const resultFiltered = await readTool.execute('tc_se_3', { id, skipEmpty: true });

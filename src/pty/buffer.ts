@@ -28,6 +28,10 @@ export class RingBuffer {
     // Normalize \r\r\n to \n and \r\n to \n for internal storage
     // We want to treat both as a single newline.
     cleanData = cleanData.replace(/\r+\n/g, '\n');
+    
+    // Collapse multiple consecutive newlines into a single one
+    // This prevents buffer bloat from excessive empty lines while preserving single newlines
+    cleanData = cleanData.replace(/\n{2,}/g, '\n');
 
     this.buffer += cleanData;
     this.isDirty = true;
