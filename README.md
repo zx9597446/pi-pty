@@ -36,7 +36,7 @@ pi install git:github.com/zx9597446/pi-pty
 | `pty_search` | Search buffer for regex pattern with match pagination |
 | `pty_list`    | List all active and exited PTY sessions                |
 | `pty_kill`    | Terminate a session, optionally clean up buffer        |
-| `pty_signal`  | Send signal (SIGINT, SIGTERM, SIGKILL) to process     |
+
 | `pty_watch`   | Async watch for a regex pattern in session output      |
 | `pty_unwatch` | Stop watching a session for a specific pattern         |
 | `pty_help`    | Get the strategy guide for managing PTY sessions       |
@@ -120,14 +120,21 @@ Get the strategy guide for managing PTY sessions. No parameters required.
 | `id`      | string  | —       | Session ID                              |
 | `cleanup` | boolean | `false` | If true, remove session and free buffer |
 
-### `pty_signal`
+### Signals
 
-Send a signal to the PTY process.
+To send **Ctrl+C** (interrupt), write the `\x03` escape sequence:
 
-| Parameter | Type   | Default | Description                                            |
-| --------- | ------ | ------- | ------------------------------------------------------ |
-| `id`      | string | —       | Session ID                                             |
-| `signal`  | string | —       | Signal: `SIGINT`, `CTRL_C`, `SIGTERM`, `SIGKILL`      |
+```
+pty_write(id="...", data="\x03")
+```
+
+On **Windows**, `\x03` may not reliably stop processes. Use `pty_kill` instead:
+
+```
+pty_kill(id="...", cleanup=false)
+```
+
+For **graceful or forced termination** on all platforms, use `pty_kill`.
 
 ### `pty_search`
 
@@ -170,7 +177,7 @@ Search the buffer for a regex pattern with match-based pagination.
 ### Windows-Specific
 
 - **Interactive Input**: Some commands requiring direct TTY interaction (e.g., `set /p var=` in batch scripts) may not capture input reliably via ConPTY.
-- **Ctrl+C**: Sending `\x03` (Ctrl+C) to background processes may not always terminate them on Windows. Use `pty_kill` or `pty_signal` with `SIGTERM` instead.
+- **Ctrl+C**: On Windows, sending `\x03` (Ctrl+C) via `pty_write` may not reliably terminate processes. Use `pty_kill` for reliable termination.
 - **Shell Selection**: On Windows, the extension uses `cmd.exe` by default through zigpty. Commands may behave differently across shells (cmd/powershell/git-bash).
 
 ### Cross-Platform
@@ -183,7 +190,7 @@ Search the buffer for a regex pattern with match-based pagination.
 ```
 pi-pty/
 ├── src/
-│   ├── index.ts          # Extension entry point (registers 8 tools)
+│   ├── index.ts          # Extension entry point (registers 7 tools)
 │   └── pty/
 │       ├── manager.ts    # PTYManager — orchestrates lifecycle + output + watchers
 │       ├── lifecycle.ts  # SessionLifecycleManager — spawn/kill/process management

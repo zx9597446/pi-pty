@@ -258,7 +258,7 @@ export default function (pi: any) {
   // pty_write tool
   pi.registerTool({
     name: "pty_write",
-    description: "Write data to PTY stdin. Supports base64 for complex scripts/binary.",
+    description: "Write data to PTY stdin. Supports base64 for complex scripts/binary. For Ctrl+C, write \\x03. For termination, use pty_kill.",
     parameters: Type.Object({
       id: Type.String({ description: 'PTY session ID' }),
       data: Type.String({ description: 'Data to send' }),
@@ -513,42 +513,7 @@ export default function (pi: any) {
     },
   });
 
-  // pty_signal tool
-  pi.registerTool({
-    name: "pty_signal",
-    description: "Send a signal to the PTY process (e.g., SIGINT, SIGTERM).",
-    parameters: Type.Object({
-      id: Type.String({ description: 'PTY session ID' }),
-      signal: Type.String({
-        enum: ['SIGINT', 'SIGTERM', 'SIGKILL', 'SIGBREAK', 'CTRL_C'],
-        description: 'Signal to send (SIGINT or CTRL_C for Ctrl+C, SIGTERM/SIGKILL/SIGBREAK for termination)'
-      }),
-    }),
-    async execute(toolCallId: string, args: any) {
-      const session = manager.get(args.id);
-      if (!session) throw new Error(`PTY session '${args.id}' not found.`);
-      if (session.status !== 'running') throw new Error(`Cannot send signal to PTY '${args.id}' (${session.status}).`);
-
-      // On Windows, zigpty/ConPTY might not support all Unix signals via .kill()
-      // But we can try to send the byte sequence for Ctrl+C if requested
-      if (args.signal === 'SIGINT' || args.signal === 'CTRL_C') {
-        manager.write(args.id, ETX);
-        return { content: [{ type: "text", text: `Sent CTRL_C (\\x03) to ${args.id}` }] };
-      }
-
-      // For SIGTERM/SIGKILL/SIGBREAK, attempt to terminate the process.
-      // Note: On Windows, these are best-effort; ConPTY may not differentiate them.
-      const success = manager.kill(args.id, false);
-      return { 
-        content: [{ type: "text", text: success 
-          ? `Sent ${args.signal} to ${args.id} (process termination requested)`
-          : `Failed to send ${args.signal} to ${args.id}` }],
-        details: { success }
-      };
-    },
-  });
-
-  // pty_help tool
+  // pty_help tool// pty_help tool
   pi.registerTool({
     name: "pty_help",
     description: "Get the comprehensive strategy guide for managing PTY sessions.",
@@ -568,7 +533,7 @@ export default function (pi: any) {
         `### STRATEGY: ROBUST INPUT`,
         `- BASE64: For binary or complex scripts, use pty_write(isBase64=true).`,
         `- NEWLINE: Use newline=true to append \\n to your data. Smart: won't double-newline.`,
-        `- SIGNALS: Use pty_signal(id='...', signal='SIGINT') for Ctrl+C or SIGTERM for graceful exit.`,
+        `- SIGNALS: Use pty_write(id='...', data='\\x03') for Ctrl+C. On Windows, use pty_kill(id='...') for reliable termination.`,
         `- UNICODE: Full UTF-8 support is enabled by default.`,
       ];
 
@@ -577,7 +542,7 @@ export default function (pi: any) {
           ``,
           `### LIMITATIONS: WINDOWS`,
           `- INPUT: 'set /p' or some password prompts may NOT capture pty_write. Avoid interactive prompt scripts.`,
-          `- CTRL+C: Writing '\\x03' may not stop processes. Use pty_kill(id='...', cleanup=false) for reliable termination.`,
+          `- CTRL+C: On Windows, pty_write \\x03 may not work. Use pty_kill(id='...') for reliable termination.`,
         );
       }
 
