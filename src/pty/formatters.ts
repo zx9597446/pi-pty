@@ -31,19 +31,9 @@ export function formatLine(text: string, lineNumber: number, maxLength: number =
   return `[${lineNumber}] ${displayLine}`;
 }
 
-export interface SessionInfo {
-  id: string;
-  title: string;
-  command: string;
-  args: string[];
-  status: string;
-  pid: number;
-  lineCount: number;
-  durationMs?: number;
-  createdAt?: string;
-}
+import type { PTYSessionInfo } from './types.js';
 
-export function formatSessionInfo(session: SessionInfo): string[] {
+export function formatSessionInfo(session: PTYSessionInfo): string[] {
   const duration = session.durationMs !== undefined 
     ? (session.durationMs > 1000 ? `${(session.durationMs / 1000).toFixed(1)}s` : `${session.durationMs}ms`)
     : 'unknown';

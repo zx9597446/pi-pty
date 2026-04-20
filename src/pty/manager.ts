@@ -110,6 +110,17 @@ export class PTYManager {
     }
   }
 
+  /** Build a summary from the watcher's match buffer, then invoke callback and reset state. */
+  private flushWatcher(watcher: Watcher, data: string): void {
+    const summary = watcher.matchBuffer.length > 1
+      ? `${watcher.matchBuffer[0]} ... ${watcher.matchBuffer[watcher.matchBuffer.length - 1]}`
+      : data;
+    this.invokeWatcherCallback(watcher, summary, watcher.pendingCount);
+    watcher.pendingCount = 0;
+    watcher.matchBuffer = [];
+    watcher.lastNotifyTime = Date.now();
+  }
+
   private processWatcherMatch(watcher: Watcher, data: string, sessionWatchers: Set<Watcher>): void {
     watcher.lastMatchData = data;
     watcher.pendingCount++;
@@ -119,49 +130,35 @@ export class PTYManager {
       watcher.matchBuffer.shift();
     }
 
+    // Non-persistent: fire once and remove
     if (!watcher.persistent) {
       this.invokeWatcherCallback(watcher, data, 1);
       sessionWatchers.delete(watcher);
       return;
     }
 
-    const now = Date.now();
     const throttleMs = watcher.throttleMs || 0;
 
+    // No throttling: fire immediately
     if (throttleMs <= 0) {
-      this.invokeWatcherCallback(watcher, data, 1);
-      watcher.pendingCount = 0;
-      watcher.matchBuffer = [];
+      this.flushWatcher(watcher, data);
       return;
     }
 
-    if (watcher.timeout) {
-      return;
-    }
+    // Already waiting for a delayed flush
+    if (watcher.timeout) return;
 
-    const timeSinceLast = now - (watcher.lastNotifyTime || 0);
+    // Throttled: flush now or schedule
+    const timeSinceLast = Date.now() - (watcher.lastNotifyTime || 0);
     if (timeSinceLast >= throttleMs) {
-      const summary = watcher.matchBuffer.length > 1 
-        ? `${watcher.matchBuffer[0]} ... ${watcher.matchBuffer[watcher.matchBuffer.length - 1]}`
-        : data;
-      this.invokeWatcherCallback(watcher, summary, watcher.pendingCount);
-      watcher.pendingCount = 0;
-      watcher.matchBuffer = [];
-      watcher.lastNotifyTime = now;
+      this.flushWatcher(watcher, data);
     } else {
-      const delay = throttleMs - timeSinceLast;
       watcher.timeout = setTimeout(() => {
         watcher.timeout = undefined;
         if (watcher.pendingCount > 0) {
-          const summary = watcher.matchBuffer.length > 1 
-            ? `${watcher.matchBuffer[0]} ... ${watcher.matchBuffer[watcher.matchBuffer.length - 1]}`
-            : (watcher.lastMatchData || '');
-          this.invokeWatcherCallback(watcher, summary, watcher.pendingCount);
-          watcher.pendingCount = 0;
-          watcher.matchBuffer = [];
-          watcher.lastNotifyTime = Date.now();
+          this.flushWatcher(watcher, watcher.lastMatchData || '');
         }
-      }, delay);
+      }, throttleMs - timeSinceLast);
     }
   }
 

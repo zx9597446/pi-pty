@@ -77,6 +77,10 @@ function isSearchResult(result: ReadResult | SearchResult): result is SearchResu
   return 'matches' in result;
 }
 
+function hasData(result: ReadResult | SearchResult): boolean {
+  return isSearchResult(result) ? result.matches.length > 0 : result.lines.length > 0;
+}
+
 function buildEmptyOutput(openTag: string, pattern: string | undefined, result: ReadResult | SearchResult): string[] {
   if (isSearchResult(result)) {
     return [
@@ -108,9 +112,7 @@ function buildDataOutput(openTag: string, result: ReadResult | SearchResult, off
     ? result.matches 
     : result.lines.map((line, i) => ({ lineNumber: currentOffset + i + 1, text: line }));
   
-  const formattedLines = items.map(item => {
-    return formatLine(item.text, item.lineNumber, 2000, doStrip);
-  });
+  const formattedLines = items.map(item => formatLine(item.text, item.lineNumber, 2000, doStrip));
 
   const pagination = isSearch
     ? (result.hasMore 
@@ -123,54 +125,92 @@ function buildDataOutput(openTag: string, result: ReadResult | SearchResult, off
   return [openTag, ...formattedLines, '', pagination, `</pty_output>`];
 }
 
+/** Compile a regex pattern, throwing a descriptive error on failure. */
+function compilePattern(pattern: string, ignoreCase: boolean): RegExp {
+  try {
+    return new RegExp(pattern, ignoreCase ? 'i' : '');
+  } catch (e: any) {
+    throw new Error(`Invalid regex pattern '${pattern}': ${e.message}`);
+  }
+}
+
+/** Build the full output text for a read/search result, including hints. */
+function formatReadOutput(sessionId: string, sessionStatus: string, pattern: string | undefined, result: ReadResult | SearchResult, offset: number, doStrip: boolean, limit: number): string {
+  const openTag = pattern
+    ? `<pty_output id="${sessionId}" status="${sessionStatus}" pattern="${pattern}">`
+    : `<pty_output id="${sessionId}" status="${sessionStatus}">`;
+
+  const outputLines = hasData(result)
+    ? buildDataOutput(openTag, result, offset, doStrip)
+    : buildEmptyOutput(openTag, pattern, result);
+
+  let outputText = outputLines.join('\n');
+
+  // Add pagination hints
+  const shouldHint = isSearchResult(result)
+    ? result.hasMore
+    : result.hasMore || sessionStatus === 'running';
+  if (shouldHint) {
+    const itemCount = isSearchResult(result) ? result.matches.length : result.lines.length;
+    const nextOffset = result.offset + itemCount;
+    outputText += `\n\n${HINTS.READ(result.totalLines, nextOffset, limit)}`;
+  }
+
+  return outputText;
+}
+
+function getLastLine(id: string, totalLines: number): string {
+  if (totalLines <= 0) return '(no output)';
+  try {
+    const result = manager.read(id, totalLines - 1, 1);
+    return result?.lines[0]?.slice(0, 250) ?? '(no output)';
+  } catch {
+    return '(no output)';
+  }
+}
+
+function buildExitMessage(info: PTYSessionInfo, exitCode: number | null): string {
+  const totalLines = manager.get(info.id)?.lineCount ?? 0;
+  const lastLine = stripAnsi(getLastLine(info.id, totalLines)).trim();
+  return [
+    `<pty_exited>`,
+    `ID: ${info.id}`,
+    `Title: ${info.title}`,
+    `Command: ${formatCommand(info.command, info.args)}`,
+    `Exit Code: ${exitCode}`,
+    `Duration: ${info.durationMs ?? 'unknown'}ms`,
+    `Lines: ${totalLines}`,
+    `Last line: ${lastLine}`,
+    `</pty_exited>`,
+    HINTS.EXIT(exitCode)
+  ].join('\n');
+}
+
 // Flag to track if manager has been cleared
 let managerCleared = false;
 
 async function handlePtyExit(pi: any, info: PTYSessionInfo, exitCode: number | null, notify: boolean) {
   if (!notify || managerCleared) return;
   
+  let message: string;
   try {
-    const currentSession = manager.get(info.id);
-    const totalLines = currentSession?.lineCount ?? 0;
-    
-    let lastLine = '(no output)';
-    try {
-      const lastLineResult = totalLines > 0 ? manager.read(info.id, totalLines - 1, 1) : null;
-      lastLine = lastLineResult?.lines[0]?.slice(0, 250) ?? '(no output)';
-    } catch {
-      // ignore
-    }
-    
-    const message = [
-      `<pty_exited>`,
-      `ID: ${info.id}`,
-      `Title: ${info.title}`,
-      `Command: ${formatCommand(info.command, info.args)}`,
-      `Exit Code: ${exitCode}`,
-      `Duration: ${info.durationMs ?? 'unknown'}ms`,
-      `Lines: ${totalLines}`,
-      `Last line: ${stripAnsi(lastLine).trim()}`,
-      `</pty_exited>`,
-      HINTS.EXIT(exitCode)
-    ].join('\n');
-
-    setTimeout(async () => {
-      // Check again after timeout in case manager was cleared during the wait
-      if (managerCleared) return;
-      try {
-        if (typeof pi?.sendMessage === 'function') {
-          await pi.sendMessage({
-            role: 'assistant',
-            content: [{ type: 'text', text: message }]
-          });
-        }
-      } catch (err) {
-        console.error(`Failed to send exit message for ${info.id}:`, err);
-      }
-    }, 50);
+    message = buildExitMessage(info, exitCode);
   } catch (err) {
-    console.error(`Error in pty ${info.id} onExit callback:`, err);
+    console.error(`Error building exit message for ${info.id}:`, err);
+    return;
   }
+
+  setTimeout(async () => {
+    if (managerCleared) return;
+    try {
+      await pi?.sendMessage?.({
+        role: 'assistant',
+        content: [{ type: 'text', text: message }]
+      });
+    } catch (err) {
+      console.error(`Failed to send exit message for ${info.id}:`, err);
+    }
+  }, 50);
 }
 
 export default function (pi: any) {
@@ -333,32 +373,13 @@ export default function (pi: any) {
       const limit = args.limit ?? 500;
       const doStrip = args.stripAnsi ?? true;
 
-      const result = !!args.pattern
-        ? (() => { try { return manager.search(args.id, new RegExp(args.pattern, args.ignoreCase ? 'i' : ''), offset, limit); } catch (e: any) { throw new Error(`Invalid regex pattern '${args.pattern}': ${e.message}`); } })()
+      const result = args.pattern
+        ? manager.search(args.id, compilePattern(args.pattern, args.ignoreCase), offset, limit)
         : manager.read(args.id, offset, limit);
 
       if (!result) throw new Error(`Failed to read from PTY '${args.id}'.`);
 
-      const openTag = isSearchResult(result)
-        ? `<pty_output id="${args.id}" status="${session.status}" pattern="${args.pattern}">`
-        : `<pty_output id="${args.id}" status="${session.status}">`;
-
-      const hasData = isSearchResult(result) ? result.matches.length > 0 : result.lines.length > 0;
-      const outputLines = hasData 
-        ? buildDataOutput(openTag, result, offset, doStrip)
-        : buildEmptyOutput(openTag, args.pattern, result);
-
-      let outputText = outputLines.join('\n');
-      if (isSearchResult(result)) {
-        if (result.hasMore) {
-          const nextOffset = result.offset + result.matches.length;
-          outputText += `\n\n${HINTS.READ(result.totalLines, nextOffset, limit)}`;
-        }
-      } else if (result.hasMore || session.status === 'running') {
-        const nextOffset = result.offset + result.lines.length;
-        outputText += `\n\n${HINTS.READ(result.totalLines, nextOffset, limit)}`;
-      }
-
+      const outputText = formatReadOutput(args.id, session.status, args.pattern, result, offset, doStrip, limit);
       return { content: [{ type: "text", text: outputText }], details: result };
     },
   });
@@ -382,21 +403,10 @@ export default function (pi: any) {
       const offset = args.offset ?? 0;
       const limit = args.limit ?? 100;
       const doStrip = args.stripAnsi ?? true;
-      const result = (() => { try { return manager.search(args.id, new RegExp(args.pattern, args.ignoreCase ? 'i' : ''), offset, limit); } catch (e: any) { throw new Error(`Invalid regex pattern '${args.pattern}': ${e.message}`); } })();
+      const result = manager.search(args.id, compilePattern(args.pattern, args.ignoreCase), offset, limit);
       if (!result) throw new Error(`Failed to search PTY '${args.id}'.`);
 
-      const openTag = `<pty_output id="${args.id}" status="${session.status}" pattern="${args.pattern}">`;
-      const hasData = result.matches.length > 0;
-      const outputLines = hasData
-        ? buildDataOutput(openTag, result, offset, doStrip)
-        : buildEmptyOutput(openTag, args.pattern, result);
-
-      let outputText = outputLines.join('\n');
-      if (result.hasMore) {
-        const nextOffset = result.offset + result.matches.length;
-        outputText += `\n\n${HINTS.READ(result.totalLines, nextOffset, limit)}`;
-      }
-
+      const outputText = formatReadOutput(args.id, session.status, args.pattern, result, offset, doStrip, limit);
       return { content: [{ type: 'text', text: outputText }], details: result };
     }
   });
