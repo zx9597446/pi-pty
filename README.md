@@ -86,6 +86,7 @@ Read the session output buffer.
 | `pattern`    | string  | —       | Regex to filter lines                   |
 | `ignoreCase` | boolean | `false` | Case-insensitive pattern matching       |
 | `stripAnsi`  | boolean | `true`  | Strip ANSI escape sequences from output |
+| `skipEmpty`  | boolean | `false` | Skip empty/whitespace-only lines        |
 
 ### `pty_list`
 

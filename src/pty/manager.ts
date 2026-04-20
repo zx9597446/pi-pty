@@ -223,16 +223,16 @@ export class PTYManager {
     return this.outputManager.write(session, data);
   }
 
-  read(id: string, offset: number = 0, limit?: number): ReadResult | null {
+  read(id: string, offset: number = 0, limit?: number, skipEmpty?: boolean): ReadResult | null {
     const session = this.lifecycleManager.getSession(id);
     if (!session) return null;
-    return this.outputManager.read(session, offset, limit);
+    return this.outputManager.read(session, offset, limit, skipEmpty);
   }
 
-  search(id: string, pattern: RegExp, offset: number = 0, limit?: number): SearchResult | null {
+  search(id: string, pattern: RegExp, offset: number = 0, limit?: number, skipEmpty?: boolean): SearchResult | null {
     const session = this.lifecycleManager.getSession(id);
     if (!session) return null;
-    return this.outputManager.search(session, pattern, offset, limit);
+    return this.outputManager.search(session, pattern, offset, limit, skipEmpty);
   }
 
   list(): PTYSessionInfo[] {

@@ -209,6 +209,38 @@ describe('index.ts tool execute functions', () => {
 
       expect(result.content[0].text).toContain('^C');
     });
+
+    it('should correctly decode base64 with multi-byte UTF-8 characters', async () => {
+      const spawnTool = mockPi.getTool('pty_spawn')!;
+      const spawnResult = await spawnTool.execute('tc_b64_utf8_1', {
+        command: 'bash',
+        description: 'd',
+      }, { sessionId: 's1' });
+
+      const id = spawnResult.content[0].text.match(/ID: (pty_[0-9a-f]+)/)![1];
+      
+      // Test string with Chinese characters: "你好世界" (4 Chinese chars)
+      // In UTF-8, each Chinese char is 3 bytes, so total 12 bytes
+      // Base64 encoded: "5L2g5aW9V29ybGQ="
+      const chineseText = '你好世界';
+      const base64Encoded = Buffer.from(chineseText, 'utf8').toString('base64');
+      
+      // Verify the base64 encoding is correct
+      expect(base64Encoded).toBe('5L2g5aW95LiW55WM');
+      
+      const writeTool = mockPi.getTool('pty_write')!;
+      const result = await writeTool.execute('tc_b64_utf8_2', {
+        id,
+        data: base64Encoded,
+        isBase64: true,
+      });
+      
+      // Should report correct character count (4 Chinese characters)
+      // Note: bytesSent is string.length, which counts UTF-16 code units
+      // For 4 Chinese chars, string.length is 4
+      expect(result.details?.bytesSent).toBe(4);
+      // The PTY will correctly encode these 4 characters as 12 bytes in UTF-8
+    });
   });
 
   describe('pty_read execute', () => {
@@ -325,6 +357,31 @@ describe('index.ts tool execute functions', () => {
       await expect(
         readTool.execute('tc11', { id: 'pty_fake' })
       ).rejects.toThrow("not found");
+    });
+
+    it('should skip empty lines when skipEmpty=true', async () => {
+      const spawnTool = mockPi.getTool('pty_spawn')!;
+      const spawnResult = await spawnTool.execute('tc_se_1', {
+        command: 'test',
+        description: 'd',
+      }, { sessionId: 's1' });
+
+      const id = spawnResult.content[0].text.match(/ID: (pty_[0-9a-f]+)/)![1];
+
+      const pty = getLastPty();
+      pty.emitData('\n\nhello\n\nworld\n');
+
+      const readTool = mockPi.getTool('pty_read')!;
+      
+      // Without skipEmpty, should show all lines including empty ones
+      const resultAll = await readTool.execute('tc_se_2', { id });
+      expect(resultAll.details?.totalLines).toBeGreaterThanOrEqual(5);
+      
+      // With skipEmpty, should only show non-empty lines
+      const resultFiltered = await readTool.execute('tc_se_3', { id, skipEmpty: true });
+      expect(resultFiltered.details?.totalLines).toBe(2);
+      expect(resultFiltered.content[0].text).toContain('hello');
+      expect(resultFiltered.content[0].text).toContain('world');
     });
   });
 

@@ -10,18 +10,32 @@ export class OutputManager {
     }
   }
 
-  read(session: PTYSession, offset: number = 0, limit?: number): ReadResult {
-    const totalLines = session.buffer.length;
-    const actualOffset = offset < 0 ? Math.max(0, totalLines + offset) : offset;
-    const lines = session.buffer.read(offset, limit);
-    const hasMore = actualOffset + lines.length < totalLines;
-    return { lines, totalLines, offset: actualOffset, hasMore };
+  read(session: PTYSession, offset: number = 0, limit?: number, skipEmpty?: boolean): ReadResult {
+    const allLines = session.buffer.read(0, undefined);
+    const totalLines = allLines.length;
+    
+    // Filter empty lines if requested
+    const filteredLines = skipEmpty ? allLines.filter(line => line.trim().length > 0) : allLines;
+    const filteredTotal = filteredLines.length;
+    
+    // Apply offset and limit on filtered lines
+    const actualOffset = offset < 0 ? Math.max(0, filteredTotal + offset) : offset;
+    const lines = filteredLines.slice(actualOffset, limit !== undefined ? actualOffset + limit : undefined);
+    const hasMore = actualOffset + lines.length < filteredTotal;
+    
+    return { lines, totalLines: filteredTotal, offset: actualOffset, hasMore };
   }
 
-  search(session: PTYSession, pattern: RegExp, offset: number = 0, limit?: number): SearchResult {
-    const allMatches = session.buffer.search(pattern);
+  search(session: PTYSession, pattern: RegExp, offset: number = 0, limit?: number, skipEmpty?: boolean): SearchResult {
+    let allMatches = session.buffer.search(pattern);
+    
+    // Filter empty lines if requested
+    if (skipEmpty) {
+      allMatches = allMatches.filter(match => match.text.trim().length > 0);
+    }
+    
     const totalMatches = allMatches.length;
-    const totalLines = session.buffer.length;
+    const totalLines = skipEmpty ? allMatches.length : session.buffer.length;
     const paginatedMatches =
       limit !== undefined ? allMatches.slice(offset, offset + limit) : allMatches.slice(offset);
     const hasMore = offset + paginatedMatches.length < totalMatches;

@@ -311,8 +311,9 @@ export default function (pi: any) {
 
       let rawData: string;
       if (args.isBase64) {
-        // Correct base64 handling: preserve bytes
-        rawData = Buffer.from(args.data, 'base64').toString('binary');
+        // Decode base64 and convert to UTF-8 string for PTY
+        // This ensures multi-byte characters (e.g., Chinese) are correctly transmitted
+        rawData = Buffer.from(args.data, 'base64').toString('utf8');
       } else {
         rawData = args.data;
       }
@@ -363,6 +364,7 @@ export default function (pi: any) {
       pattern: Type.Optional(Type.String({ description: 'Regex filter. If set, returns matching lines only.' })),
       ignoreCase: Type.Optional(Type.Boolean({ description: 'Default: false' })),
       stripAnsi: Type.Optional(Type.Boolean({ description: 'Default: true', default: true })),
+      skipEmpty: Type.Optional(Type.Boolean({ description: 'Skip empty/whitespace-only lines (default: false)' })),
     }),
     async execute(toolCallId: string, args: any) {
       const session = manager.get(args.id);
@@ -371,10 +373,11 @@ export default function (pi: any) {
       const offset = args.offset ?? 0;
       const limit = args.limit ?? 500;
       const doStrip = args.stripAnsi ?? true;
+      const doSkipEmpty = args.skipEmpty ?? false;
 
       const result = args.pattern
-        ? manager.search(args.id, compilePattern(args.pattern, args.ignoreCase), offset, limit)
-        : manager.read(args.id, offset, limit);
+        ? manager.search(args.id, compilePattern(args.pattern, args.ignoreCase), offset, limit, doSkipEmpty)
+        : manager.read(args.id, offset, limit, doSkipEmpty);
 
       if (!result) throw new Error(`Failed to read from PTY '${args.id}'.`);
 
