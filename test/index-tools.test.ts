@@ -355,6 +355,27 @@ describe('index.ts tool execute functions', () => {
       expect(result.content[0].text).toContain('Dev');
       expect(result.content[0].text).toContain('Server');
     });
+
+    it('should clean up exited sessions when cleanup=true', async () => {
+      const spawnTool = mockPi.getTool('pty_spawn')!;
+      const killTool = mockPi.getTool('pty_kill')!;
+      
+      const spawnResult = await spawnTool.execute('tc_cl_1', {
+        command: 'echo', args: ['hello'], title: 'Echo', description: 'd',
+      }, { sessionId: 's1' });
+      const id = spawnResult.content[0].text.match(/ID: (pty_[0-9a-f]+)/)![1];
+      
+      // Simulate exit
+      await killTool.execute('tc_cl_2', { id });
+      
+      const listTool = mockPi.getTool('pty_list')!;
+      // Should still be in list before cleanup
+      const resBefore = await listTool.execute('tc_cl_3', {});
+      expect(resBefore.content[0].text).toContain('Total: 1');
+      
+      const resAfter = await listTool.execute('tc_cl_4', { cleanup: true });
+      expect(resAfter.content[0].text).toContain('No active PTY sessions');
+    });
   });
 
   describe('pty_kill execute', () => {

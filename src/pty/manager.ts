@@ -61,7 +61,7 @@ export class PTYManager {
     }
     const sessionWatchers = this.watchers.get(id)!;
     const patternStr = pattern.source;
-    
+
     // Check for duplicate pattern
     for (const watcher of sessionWatchers) {
       if (watcher.patternStr === patternStr) {
@@ -83,23 +83,6 @@ export class PTYManager {
       pendingCount: 0,
       matchBuffer: []
     });
-  }
-
-  removeWatcher(id: string, patternStr: string): boolean {
-    const sessionWatchers = this.watchers.get(id);
-    if (!sessionWatchers) return false;
-    
-    let found = false;
-    for (const watcher of sessionWatchers) {
-      if (watcher.patternStr === patternStr) {
-        if (watcher.timeout) {
-          clearTimeout(watcher.timeout);
-        }
-        sessionWatchers.delete(watcher);
-        found = true;
-      }
-    }
-    return found;
   }
 
   private invokeWatcherCallback(watcher: Watcher, data: string, count: number): void {
@@ -163,6 +146,11 @@ export class PTYManager {
   }
 
   private notifyRawOutput(session: any, data: string): void {
+    // Skip all processing if session is being killed or cleaned up
+    if (session.status === 'killing' || session.status === 'killed' || session.status === 'exited') {
+      return;
+    }
+
     // 1. Notify static callbacks
     for (const callback of this.rawOutputCallbacks) {
       try {
@@ -181,11 +169,11 @@ export class PTYManager {
 
       for (const watcher of Array.from(sessionWatchers)) {
         watcher.pattern.lastIndex = 0;
-        
+
         // Match against current clean chunk line-by-line first
         const chunkLines = cleanChunk.split(/\r?\n/);
         const chunkMatch = chunkLines.find(line => watcher.pattern.test(line));
-        
+
         if (chunkMatch !== undefined) {
           this.processWatcherMatch(watcher, chunkMatch, sessionWatchers);
           continue;
@@ -261,9 +249,8 @@ export class PTYManager {
     const session = this.lifecycleManager.getSession(id);
     if (!session) return false;
 
-    if (cleanup) {
-      this.clearSessionWatchers(id);
-    }
+    // Always clear watchers on kill to prevent orphaned callbacks
+    this.clearSessionWatchers(id);
 
     const info = this.lifecycleManager.toInfo(session);
     if (session.status === 'running') {

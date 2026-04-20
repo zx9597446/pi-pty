@@ -38,7 +38,6 @@ pi install git:github.com/zx9597446/pi-pty
 | `pty_kill`    | Terminate a session, optionally clean up buffer        |
 
 | `pty_watch`   | Async watch for a regex pattern in session output      |
-| `pty_unwatch` | Stop watching a session for a specific pattern         |
 | `pty_help`    | Get the strategy guide for managing PTY sessions       |
 
 ### `pty_spawn`
@@ -88,6 +87,14 @@ Read the session output buffer.
 | `ignoreCase` | boolean | `false` | Case-insensitive pattern matching       |
 | `stripAnsi`  | boolean | `true`  | Strip ANSI escape sequences from output |
 
+### `pty_list`
+
+List all active and exited PTY sessions.
+
+| Parameter | Type    | Default | Description                                         |
+| --------- | ------- | ------- | --------------------------------------------------- |
+| `cleanup` | boolean | `false` | Remove exited/killed sessions from the list         |
+
 ### `pty_watch`
 
 Watch a session for a regex pattern. Fires `<pty_match>` asynchronously when found.
@@ -100,16 +107,6 @@ Watch a session for a regex pattern. Fires `<pty_match>` asynchronously when fou
 | `persistent` | boolean | `false` | If true, remains active after a match.                                     |
 | `throttleMs` | number  | `5000`  | For persistent watchers, min time between notifications (includes a count). |
 
-### `pty_unwatch`
-
-Stop watching a session for a specific pattern.
-
-| Parameter | Type   | Description                                          |
-| --------- | ------ | ---------------------------------------------------- |
-| `id`      | string | Session ID                                           |
-| `pattern` | string | Exact regex pattern string used when starting the watch |
-
-### `pty_help`
 
 Get the strategy guide for managing PTY sessions. No parameters required.
 
@@ -190,7 +187,7 @@ Search the buffer for a regex pattern with match-based pagination.
 ```
 pi-pty/
 ├── src/
-│   ├── index.ts          # Extension entry point (registers 7 tools)
+│   ├── index.ts          # Extension entry point (registers 6 tools)
 │   └── pty/
 │       ├── manager.ts    # PTYManager — orchestrates lifecycle + output + watchers
 │       ├── lifecycle.ts  # SessionLifecycleManager — spawn/kill/process management

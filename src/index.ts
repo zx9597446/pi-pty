@@ -68,7 +68,6 @@ const HINTS = {
   MATCH: (pattern: string) => [
     `<system_reminder>`,
     `- INVESTIGATE: Use \`pty_read(pattern='${pattern}')\` to see historical matches.`,
-    `- UNWATCH: Use \`pty_unwatch(pattern='${pattern}')\` to stop notifications.`,
     `</system_reminder>`,
   ].join('\n')
 };
@@ -457,33 +456,23 @@ export default function (pi: any) {
     },
   });
 
-  // pty_unwatch tool
-  pi.registerTool({
-    name: "pty_unwatch",
-    description: "Stop watching a pattern.",
-    parameters: Type.Object({
-      id: Type.String({ description: 'PTY session ID' }),
-      pattern: Type.String({ description: 'Regex used in pty_watch' }),
-    }),
-    async execute(toolCallId: string, args: any) {
-      const session = manager.get(args.id);
-      if (!session) throw new Error(`PTY session '${args.id}' not found.`);
-      if (!manager.removeWatcher(args.id, args.pattern)) {
-        if (session.status !== 'running') {
-          return { content: [{ type: "text", text: `Session ${args.id} is already ${session.status}. Watchers were cleared.` }] };
-        }
-        throw new Error(`Watcher not found for pattern "${args.pattern}" on session ${args.id}.`);
-      }
-      return { content: [{ type: "text", text: `Stopped watching "${args.pattern}" on ${args.id}` }] };
-    },
-  });
-
   // pty_list tool
   pi.registerTool({
     name: "pty_list",
     description: "List all PTY sessions.",
-    parameters: Type.Object({}),
-    async execute() {
+    parameters: Type.Object({
+      cleanup: Type.Optional(Type.Boolean({ description: 'Remove exited/killed sessions from the list (default: false)' }))
+    }),
+    async execute(toolCallId: string, args: any) {
+      if (args.cleanup) {
+        const currentSessions = manager.list();
+        for (const s of currentSessions) {
+          if (s.status === 'exited' || s.status === 'killed') {
+            manager.kill(s.id, true);
+          }
+        }
+      }
+
       const sessions = manager.list();
       if (sessions.length === 0) return { content: [{ type: "text", text: '<pty_list>\nNo active PTY sessions.\n</pty_list>' }] };
 
