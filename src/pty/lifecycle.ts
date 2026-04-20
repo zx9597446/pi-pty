@@ -67,8 +67,36 @@ export class SessionLifecycleManager {
       }
     });
 
+    // Store incomplete UTF-8 sequences for proper handling across data chunks
+    let incompleteChunk: Buffer | null = null;
+    
     session.process.onData((data: string | Buffer) => {
-      const strData = Buffer.isBuffer(data) ? session.decoder.write(data) : data;
+      let strData: string;
+      if (Buffer.isBuffer(data)) {
+        // Combine with any incomplete chunk from previous data
+        const combined = incompleteChunk 
+          ? Buffer.concat([incompleteChunk, data])
+          : data;
+        incompleteChunk = null;
+        
+        strData = combined.toString('utf8');
+        
+        // Check if the result ends with an incomplete surrogate pair
+        const lastChar = strData.charCodeAt(strData.length - 1);
+        if (lastChar >= 0xD800 && lastChar <= 0xDBFF) {
+          // High surrogate at end - this emoji is incomplete, save it for next chunk
+          const lastCodePoint = strData.codePointAt(strData.length - 1);
+          if (lastCodePoint !== undefined && lastCodePoint > 0xFFFF) {
+            // It's a surrogate pair, find the bytes for the incomplete character
+            const charStr = strData[strData.length - 1];
+            // Save the high surrogate as a buffer to prepend to next data
+            incompleteChunk = Buffer.from(charStr, 'utf8');
+            strData = strData.slice(0, -1);
+          }
+        }
+      } else {
+        strData = data;
+      }
       session.buffer.append(strData);
       onData(session, strData);
     });

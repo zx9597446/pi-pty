@@ -359,6 +359,56 @@ describe('index.ts tool execute functions', () => {
       ).rejects.toThrow("not found");
     });
 
+    it('should preserve multi-byte Unicode characters including emojis', async () => {
+      const spawnTool = mockPi.getTool('pty_spawn')!;
+      const spawnResult = await spawnTool.execute('tc_emoji_1', {
+        command: 'test',
+        description: 'd',
+      }, { sessionId: 's1' });
+
+      const id = spawnResult.content[0].text.match(/ID: (pty_[0-9a-f]+)/)![1];
+
+      const pty = getLastPty();
+      // Test with Chinese, Japanese, and emoji characters
+      pty.emitData('你好世界 🌍 日本語テスト\n');
+
+      const readTool = mockPi.getTool('pty_read')!;
+      const result = await readTool.execute('tc_emoji_2', { id });
+
+      // Verify emoji and CJK characters are preserved
+      expect(result.content[0].text).toContain('你好世界');
+      expect(result.content[0].text).toContain('日本語テスト');
+      expect(result.content[0].text).toContain('🌍');
+    });
+
+    it('should handle emoji split across multiple data chunks', async () => {
+      const spawnTool = mockPi.getTool('pty_spawn')!;
+      const spawnResult = await spawnTool.execute('tc_emoji_split_1', {
+        command: 'test',
+        description: 'd',
+      }, { sessionId: 's1' });
+
+      const id = spawnResult.content[0].text.match(/ID: (pty_[0-9a-f]+)/)![1];
+
+      const pty = getLastPty();
+      // Split emoji across multiple emitData calls
+      // 🌍 is U+1F30D, encoded as 4 UTF-8 bytes: F0 9F 8C 8D
+      const emoji = '🌍';
+      const part1 = emoji.slice(0, 1); // First UTF-16 code unit (high surrogate)
+      const part2 = emoji.slice(1); // Second UTF-16 code unit (low surrogate)
+      
+      pty.emitData('before ');
+      pty.emitData(part1);
+      pty.emitData(part2);
+      pty.emitData(' after\n');
+
+      const readTool = mockPi.getTool('pty_read')!;
+      const result = await readTool.execute('tc_emoji_split_2', { id });
+
+      // Should reassemble the emoji correctly
+      expect(result.content[0].text).toContain('🌍');
+    });
+
     it('should skip empty lines when skipEmpty=true', async () => {
       const spawnTool = mockPi.getTool('pty_spawn')!;
       const spawnResult = await spawnTool.execute('tc_se_1', {
