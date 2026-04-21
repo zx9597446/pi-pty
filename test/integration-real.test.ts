@@ -229,6 +229,47 @@ describe('Real PTY Integration', () => {
       expect(readResult).not.toBeNull();
       manager.kill(info.id);
     });
+
+    it('should write ampersand character without escaping', async () => {
+      // This test verifies that the & character is NOT escaped to &amp;
+      // when passed through manager.write
+      // We use cmd.exe and echo to verify the ampersand is preserved
+      
+      const info = manager.spawn(
+        {
+          command: 'cmd.exe',
+          args: ['/c', 'echo ready && more'],
+          parentSessionId: 'test',
+          description: 'ampersand test',
+        },
+        () => {},
+        () => {}
+      );
+
+      expect(info.status).toBe('running');
+
+      // Give it a moment to process the initial command
+      await new Promise(resolve => setTimeout(resolve, 200));
+      
+      // Write data containing ampersand via stdin
+      // Using a simple echo command that outputs the ampersand
+      const writeResult = manager.write(info.id, 'echo hello & world\n');
+      expect(writeResult).toBe(true);
+
+      // Give it a moment to process
+      await new Promise(resolve => setTimeout(resolve, 200));
+      
+      const readResult = manager.read(info.id);
+      expect(readResult).not.toBeNull();
+      
+      // The output should contain the raw ampersand, NOT &amp;
+      const output = readResult!.lines.join('\n');
+      // Windows cmd may interpret &, so check what was written
+      // The key is that & should NOT appear as &amp;
+      expect(output).not.toContain('&amp;');
+      
+      manager.kill(info.id);
+    });
   });
 
   describe('pty_read with search (real commands)', () => {

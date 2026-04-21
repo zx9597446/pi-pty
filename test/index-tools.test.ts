@@ -241,6 +241,83 @@ describe('index.ts tool execute functions', () => {
       expect(result.details?.bytesSent).toBe(4);
       // The PTY will correctly encode these 4 characters as 12 bytes in UTF-8
     });
+
+    it('should NOT escape ampersand character - critical bug test', async () => {
+      const spawnTool = mockPi.getTool('pty_spawn')!;
+      const spawnResult = await spawnTool.execute('tc_amp_1', {
+        command: 'bash',
+        description: 'd',
+      }, { sessionId: 's1' });
+
+      const id = spawnResult.content[0].text.match(/ID: (pty_[0-9a-f]+)/)![1];
+      
+      const writeTool = mockPi.getTool('pty_write')!;
+      
+      // Test data with ampersand - this should NOT be escaped to &amp;
+      const result = await writeTool.execute('tc_amp_2', {
+        id,
+        data: 'echo test & pause',
+        newline: true,
+      });
+      
+      // The preview in the result should show "& " not "&amp;"
+      expect(result.content[0].text).toContain('echo test & pause');
+      expect(result.content[0].text).not.toContain('&amp;');
+      
+      // Get the mock PTY and verify what was actually written
+      const pty = getLastPty();
+      const writeCall = (pty.write as any).mock.calls[(pty.write as any).mock.calls.length - 1];
+      const writtenData = writeCall[0];
+      
+      // The data written to PTY should contain "&" not "&amp;"
+      expect(writtenData).toContain('&');
+      expect(writtenData).not.toContain('&amp;');
+      
+      // On Windows, \n is converted to \r\n
+      // Expected: 'echo test & pause\r\n' (19 chars on Windows)
+      // If ampersand is escaped, it would be 'echo test &amp; pause\r\n' (22 chars)
+      // So if we see 22 chars, the bug exists
+      const isWindows = process.platform === 'win32';
+      const expectedLength = isWindows ? 19 : 17; // 17 + 2 for \r\n on Windows
+      const buggyLength = isWindows ? 22 : 19; // If & is escaped to &amp; (adds 3 chars)
+      
+      expect(writtenData.length).toBe(expectedLength);
+      expect(result.details?.bytesSent).toBe(expectedLength);
+      
+      // Also verify the preview text doesn't contain &amp;
+      expect(result.content[0].text).toMatch(/Sent \d+ bytes/);
+    });
+
+    it('should handle ampersand in complex commands', async () => {
+      const spawnTool = mockPi.getTool('pty_spawn')!;
+      const spawnResult = await spawnTool.execute('tc_amp_complex_1', {
+        command: 'bash',
+        description: 'd',
+      }, { sessionId: 's1' });
+
+      const id = spawnResult.content[0].text.match(/ID: (pty_[0-9a-f]+)/)![1];
+      
+      const writeTool = mockPi.getTool('pty_write')!;
+      
+      // Test with multiple ampersands and special chars
+      const result = await writeTool.execute('tc_amp_complex_2', {
+        id,
+        data: 'echo a & echo b & echo c',
+        newline: true,
+      });
+      
+      // Verify no HTML escaping occurred
+      expect(result.content[0].text).toContain('& echo');
+      expect(result.content[0].text).not.toContain('&amp;');
+      
+      const pty = getLastPty();
+      const writeCall = (pty.write as any).mock.calls[(pty.write as any).mock.calls.length - 1];
+      
+      // On Windows, \n is converted to \r\n
+      // Verify the actual data doesn't contain &amp;
+      expect(writeCall[0]).not.toContain('&amp;');
+      expect(writeCall[0]).toContain('&');
+    });
   });
 
   describe('pty_read execute', () => {
