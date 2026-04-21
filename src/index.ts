@@ -62,6 +62,7 @@ const HINTS = {
       ? `- DIAGNOSE: Exit code ${code} is non-zero. Use \`pty_read(pattern='Error|Fail|Exception')\` to find the cause.`
       : `- SUCCESS: Process finished successfully.`,
     `- FINAL LOGS: Use \`pty_read()\` to retrieve the final execution state.`,
+    `- CLEANUP: This session is exited but still consuming memory. Once you have finished diagnosing, MUST call \`pty_kill(id='...', cleanup=true)\`.`,
     `</system_reminder>`,
   ].join('\n'),
 
@@ -542,9 +543,12 @@ export default function (pi: any) {
       if (process.platform === 'win32') {
         manual.push(
           ``,
-          `### LIMITATIONS: WINDOWS`,
-          `- INPUT: 'set /p' or some password prompts may NOT capture pty_write. Avoid interactive prompt scripts.`,
-          `- CTRL+C: On Windows, pty_write \\x03 may not work. Use pty_kill(id='...') for reliable termination.`,
+          `### ⚠️ WINDOWS LIMITATIONS`,
+          `- INPUT: Non-interactive processes (e.g., 'cat', 'python -c "...") cannot receive stdin input from pty_write.`,
+          `  Only interactive shells (bash, python -i, zsh) support input reliably.`,
+          `  Workaround: Use heredoc or temp files: echo "data" | cat`,
+          `- CTRL+C: pty_write(data='\\x03') often fails. Always use pty_kill() for reliable termination.`,
+          `- READ -p: Bash 'read -p' prompts may show duplicate characters (known Git Bash issue). Do not use in automation.`,
         );
       }
 
