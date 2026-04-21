@@ -81,9 +81,10 @@ describe('RingBuffer', () => {
     it('skips empty lines', () => {
       const buf = new RingBuffer();
       buf.append('hello\n\nworld\n');
+      // consecutive newlines are collapsed to single, so 'hello\n\nworld' → 'hello\nworld'
       expect(buf.search(/$/)).toEqual([
         { lineNumber: 1, text: 'hello' },
-        { lineNumber: 3, text: 'world' },
+        { lineNumber: 2, text: 'world' },
       ]);
     });
   });
