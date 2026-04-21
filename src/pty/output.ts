@@ -1,5 +1,6 @@
 import type { PTYSession, ReadResult, SearchResult } from './types.js';
 import type { SearchMatch } from './buffer.js';
+import { stripAnsi } from './formatters.js';
 
 export class OutputManager {
   write(session: PTYSession, data: string): boolean {
@@ -16,7 +17,7 @@ export class OutputManager {
     const totalLines = allLines.length;
     
     // Filter empty lines if requested
-    const filteredLines = skipEmpty ? allLines.filter((line: string) => line.trim().length > 0) : allLines;
+    const filteredLines = skipEmpty ? allLines.filter((line: string) => stripAnsi(line).trim().length > 0) : allLines;
     const filteredTotal = filteredLines.length;
     
     // Apply offset and limit on filtered lines
@@ -32,11 +33,11 @@ export class OutputManager {
     
     // Filter empty lines if requested
     if (skipEmpty) {
-      allMatches = allMatches.filter((match: SearchMatch) => match.text.trim().length > 0);
+      allMatches = allMatches.filter((match: SearchMatch) => stripAnsi(match.text).trim().length > 0);
     }
     
     const totalMatches = allMatches.length;
-    const totalLines = skipEmpty ? allMatches.length : session.buffer.length;
+    const totalLines = session.buffer.length;
     const paginatedMatches =
       limit !== undefined ? allMatches.slice(offset, offset + limit) : allMatches.slice(offset);
     const hasMore = offset + paginatedMatches.length < totalMatches;
