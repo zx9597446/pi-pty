@@ -22,6 +22,7 @@ export interface PTYSession {
   buffer: any; // RingBuffer
   process: any; // IPty
   decoder?: any; // StringDecoder
+  _pendingCleanup?: boolean; // defer cleanup until onExit fires
 }
 
 export interface PTYSessionInfo {

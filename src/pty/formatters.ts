@@ -38,15 +38,27 @@ export function formatSessionInfo(session: PTYSessionInfo): string[] {
     ? (session.durationMs > 1000 ? `${(session.durationMs / 1000).toFixed(1)}s` : `${session.durationMs}ms`)
     : 'unknown';
     
-  return [
+  const lines: string[] = [
     `ID: ${session.id}`,
     `  Title: ${session.title}`,
     `  Command: ${formatCommand(session.command, session.args)}`,
     `  Status: ${session.status}`,
     `  PID: ${session.pid}`,
+  ];
+
+  if (session.exitCode !== undefined) {
+    lines.push(`  Exit Code: ${session.exitCode}`);
+  }
+  if (session.exitSignal !== undefined) {
+    lines.push(`  Exit Signal: ${session.exitSignal}`);
+  }
+
+  lines.push(
     `  Lines: ${session.lineCount}`,
     `  Duration: ${duration}`,
     `  Started: ${session.createdAt ?? 'unknown'}`,
     ''
-  ];
+  );
+
+  return lines;
 }

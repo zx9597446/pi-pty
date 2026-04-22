@@ -64,6 +64,11 @@ export class SessionLifecycleManager {
         session.exitSignal = signal;
         session.exitedAt = new Date();
         onExit(session, exitCode);
+
+        // Defer cleanup until after onExit so exitCode is available to callbacks
+        if (session._pendingCleanup) {
+          this.cleanupSession(session);
+        }
       }
     });
 
@@ -137,15 +142,17 @@ export class SessionLifecycleManager {
 
     if (session.status === 'running') {
       session.status = 'killing';
-      try { 
-        session.process?.kill(); 
-      } catch (e) { 
+      // Defer cleanup to onExit so exitCode is captured first
+      if (cleanup) {
+        session._pendingCleanup = true;
+      }
+      try {
+        session.process?.kill();
+      } catch (e) {
         console.error('Failed to kill PTY process:', e);
       }
-    }
-
-    if (cleanup) {
-      // Properly close the PTY before cleanup
+    } else if (cleanup) {
+      // Already exited/killed — safe to clean up now
       try {
         session.process?.close();
       } catch (e) {
@@ -156,6 +163,17 @@ export class SessionLifecycleManager {
       this.sessions.delete(id);
     }
     return true;
+  }
+
+  private cleanupSession(session: PTYSession): void {
+    try {
+      session.process?.close();
+    } catch (e) {
+      // Ignore close errors - process may have already exited
+    }
+    session.buffer.clear();
+    session.process = null;
+    this.sessions.delete(session.id);
   }
 
   clearAllSessions(): void {
